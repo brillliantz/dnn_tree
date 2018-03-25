@@ -294,10 +294,10 @@ flat_decision_p_e = []
 for decision_p in decision_p_e:
     # Compute the complement of d, which is 1 - d
     # where d is the sigmoid of fully connected output
-    decision_p_comp = tf.sub(tf.ones_like(decision_p), decision_p)
+    decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p)
 
     # Concatenate both d, 1-d
-    decision_p_pack = tf.pack([decision_p, decision_p_comp])
+    decision_p_pack = tf.stack([decision_p, decision_p_comp])
 
     # Flatten/vectorize the decision probabilities for efficient indexing
     flat_decision_p = tf.reshape(decision_p_pack, [-1])
@@ -331,7 +331,7 @@ batch_0_indices = \
 #    1   2
 #   3 4 5 6
 ##############################################################################
-in_repeat = N_LEAF / 2
+in_repeat = N_LEAF // 2
 out_repeat = N_BATCH
 
 # Let N_BATCH * N_LEAF be N_D. flat_decision_p[N_D] will return 1-d of the
@@ -350,13 +350,13 @@ for i, flat_decision_p in enumerate(flat_decision_p_e):
     mu_e.append(mu)
 
 # from the second layer to the last layer, we make the decision nodes
-for d in xrange(1, DEPTH + 1):
+for d in range(1, DEPTH + 1):
     indices = tf.range(2 ** d, 2 ** (d + 1)) - 1
     tile_indices = tf.reshape(tf.tile(tf.expand_dims(indices, 1),
                                       [1, 2 ** (DEPTH - d + 1)]), [1, -1])
     batch_indices = tf.add(batch_0_indices, tf.tile(tile_indices, [N_BATCH, 1]))
 
-    in_repeat = in_repeat / 2
+    in_repeat = in_repeat // 2
     out_repeat = out_repeat * 2
 
     # Again define the indices that picks d and 1-d for the node
@@ -366,7 +366,7 @@ for d in xrange(1, DEPTH + 1):
 
     mu_e_update = []
     for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
-        mu = tf.mul(mu, tf.gather(flat_decision_p,
+        mu = tf.multiply(mu, tf.gather(flat_decision_p,
                                   tf.add(batch_indices, batch_complement_indices)))
         mu_e_update.append(mu)
 
@@ -379,11 +379,11 @@ py_x_e = []
 for mu, leaf_p in zip(mu_e, leaf_p_e):
     # average all the leaf p
     py_x_tree = tf.reduce_mean(
-        tf.mul(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
+        tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
                tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])), 1)
     py_x_e.append(py_x_tree)
 
-py_x_e = tf.pack(py_x_e)
+py_x_e = tf.stack(py_x_e)
 py_x = tf.reduce_mean(py_x_e, 0)
 
 ##################################################
@@ -391,7 +391,7 @@ py_x = tf.reduce_mean(py_x_e, 0)
 ##################################################
 
 # cross entropy loss
-cost = tf.reduce_mean(-tf.mul(tf.log(py_x), Y))
+cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y))
 
 # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
 train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
@@ -408,7 +408,7 @@ for i in range(100):
 
     # Result on the test set
     results = []
-    for start, end in zip(range(0, len(teX), N_BATCH), range(N_BARCH, len(teX), N_BATCH)):
+    for start, end in zip(range(0, len(teX), N_BATCH), range(N_BATCH, len(teX), N_BATCH)):
         results.extend(np.argmax(teY[start:end], axis=1) ==
             sess.run(predict, feed_dict={X: teX[start:end], p_keep_conv: 1.0,
                                          p_keep_hidden: 1.0}))
