@@ -400,6 +400,9 @@ predict = tf.argmax(py_x, 1)
 sess = tf.Session()
 sess.run(tf.initialize_all_variables())
 
+
+import time
+t0 = time.time()
 for i in range(100):
     # One epoch
     for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
@@ -413,4 +416,5 @@ for i in range(100):
             sess.run(predict, feed_dict={X: teX[start:end], p_keep_conv: 1.0,
                                          p_keep_hidden: 1.0}))
 
-    print 'Epoch: %d, Test Accuracy: %f' % (i + 1, np.mean(results))
+    print('Epoch: %d, Test Accuracy: %f' % (i + 1, np.mean(results)))
+    print(time.time() - t0)
