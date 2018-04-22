@@ -188,8 +188,8 @@ import tensorflow.examples.tutorials.mnist.input_data as input_data
 DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 N_LABEL = 10                # Number of classes
-N_TREE  = 5                 # Number of trees (ensemble)
-N_BATCH = 128               # Number of data points per mini-batch
+N_TREE  = 2                 # Number of trees (ensemble)
+N_BATCH = 60               # Number of data points per mini-batch
 
 
 def init_weights(shape, name=None):
@@ -219,34 +219,38 @@ def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
     assert(len(w4_e) == len(w_d_e))
     assert(len(w4_e) == len(w_l_e))
 
-    l1a = tf.nn.relu(tf.nn.conv2d(X, w, [1, 1, 1, 1], 'SAME'))
+    l1a = tf.nn.relu(tf.nn.conv2d(X, w, [1, 1, 1, 1], 'SAME'), name='l1a')
     l1 = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
-                        strides=[1, 2, 2, 1], padding='SAME')
-    l1 = tf.nn.dropout(l1, p_keep_conv)
+                        strides=[1, 2, 2, 1], padding='SAME', name='l1_')
+    l1 = tf.nn.dropout(l1, p_keep_conv, name='l1')
 
-    l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'))
+    l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
     l2 = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
-                        strides=[1, 2, 2, 1], padding='SAME')
-    l2 = tf.nn.dropout(l2, p_keep_conv)
+                        strides=[1, 2, 2, 1], padding='SAME', name='l2_')
+    l2 = tf.nn.dropout(l2, p_keep_conv, name='l2')
 
-    l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'))
+    l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
     l3 = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
-                        strides=[1, 2, 2, 1], padding='SAME')
+                        strides=[1, 2, 2, 1], padding='SAME', name='l3_')
 
-    l3 = tf.reshape(l3, [-1, w4_e[0].get_shape().as_list()[0]])
-    l3 = tf.nn.dropout(l3, p_keep_conv)
+    l3 = tf.reshape(l3, [-1, w4_e[0].get_shape().as_list()[0]], name='l3_reshape')
+    l3 = tf.nn.dropout(l3, p_keep_conv, name='l3')
 
     decision_p_e = []
     leaf_p_e = []
+    count = 0
     for w4, w_d, w_l in zip(w4_e, w_d_e, w_l_e):
-        l4 = tf.nn.relu(tf.matmul(l3, w4))
-        l4 = tf.nn.dropout(l4, p_keep_hidden)
+        # n_loops = N_TREES
+        l4 = tf.nn.relu(tf.matmul(l3, w4), name='l4_')
+        l4 = tf.nn.dropout(l4, p_keep_hidden, name='l4')
 
-        decision_p = tf.nn.sigmoid(tf.matmul(l4, w_d))
-        leaf_p = tf.nn.softmax(w_l)
+        decision_p = tf.nn.sigmoid(tf.matmul(l4, w_d), name='DecisionNode_{:d}'.format(count))
+        leaf_p = tf.nn.softmax(w_l, name='LeafNode_{:d}'.format(count))
 
         decision_p_e.append(decision_p)
         leaf_p_e.append(leaf_p)
+
+        count += 1
 
     return decision_p_e, leaf_p_e
 
@@ -260,17 +264,18 @@ trX = trX.reshape(-1, 28, 28, 1)
 teX = teX.reshape(-1, 28, 28, 1)
 
 # Input X, output Y
-X = tf.placeholder("float", [N_BATCH, 28, 28, 1])
-Y = tf.placeholder("float", [N_BATCH, N_LABEL])
+X = tf.placeholder("float", [N_BATCH, 28, 28, 1], 'X')
+Y = tf.placeholder("float", [N_BATCH, N_LABEL], 'Y')
 
 ##################################################
 # Initialize network weights
 ##################################################
-with tf.name_scope('network_weights'):
+with tf.name_scope('w123'):
     w = init_weights([3, 3, 1, 32], name='w')
-    w2 = init_weights([3, 3, 32, 64], name='w1')
+    w2 = init_weights([3, 3, 32, 64], name='w2')
     w3 = init_weights([3, 3, 64, 128], name='w3')
 
+with tf.name_scope('w_ensemble'):
     w4_ensemble = []
     w_d_ensemble = []
     w_l_ensemble = []
@@ -282,8 +287,8 @@ with tf.name_scope('network_weights'):
         w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
                                         name='w_l_ensemble_{:d}'.format(i)))
 
-p_keep_conv = tf.placeholder("float")
-p_keep_hidden = tf.placeholder("float")
+p_keep_conv = tf.placeholder("float", name='p_keep_conv')
+p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
 
 ##################################################
 # Define a fully differentiable deep-ndf
@@ -299,22 +304,22 @@ with tf.name_scope('dNDF_model'):
     for decision_p in decision_p_e:
         # Compute the complement of d, which is 1 - d
         # where d is the sigmoid of fully connected output
-        decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p)
+        decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p, name='decision_p_comp')
 
         # Concatenate both d, 1-d
-        decision_p_pack = tf.stack([decision_p, decision_p_comp])
+        decision_p_pack = tf.stack([decision_p, decision_p_comp], name='decision_p_pack')
 
         # Flatten/vectorize the decision probabilities for efficient indexing
-        flat_decision_p = tf.reshape(decision_p_pack, [-1])
+        flat_decision_p = tf.reshape(decision_p_pack, [-1], name='flat_decision_p')
         flat_decision_p_e.append(flat_decision_p)
 
     # 0 index of each data instance in a mini-batch
     batch_0_indices = \
         tf.tile(tf.expand_dims(tf.range(0, N_BATCH * N_LEAF, N_LEAF), 1),
-                [1, N_LEAF])
+                [1, N_LEAF], name='batch_0_indices')
 
 ###############################################################################
-# The routing probability computation
+# The routing probability (of each leaf node) computation
 #
 # We will create a routing probability matrix \mu. First, we will initialize
 # \mu using the root node d, 1-d. To efficiently implement this routing, we
@@ -352,7 +357,7 @@ with tf.name_scope('route_prob'):
     # iterate over each tree
     for i, flat_decision_p in enumerate(flat_decision_p_e):
         mu = tf.gather(flat_decision_p,
-                       tf.add(batch_0_indices, batch_complement_indices))
+                       tf.add(batch_0_indices, batch_complement_indices), name='mu_{:d}'.format(i))
         mu_e.append(mu)
 
     # from the second layer to the last layer, we make the decision nodes
@@ -371,10 +376,12 @@ with tf.name_scope('route_prob'):
                      * out_repeat).reshape(N_BATCH, N_LEAF)
 
         mu_e_update = []
+        count = 0
         for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
             mu = tf.multiply(mu, tf.gather(flat_decision_p,
-                                      tf.add(batch_indices, batch_complement_indices)))
+                                      tf.add(batch_indices, batch_complement_indices)), name='mu_{:d}_new'.format(count))
             mu_e_update.append(mu)
+            count += 1
 
         mu_e = mu_e_update
 
@@ -383,15 +390,19 @@ with tf.name_scope('route_prob'):
 ##################################################
 with tf.name_scope('P_y_cond_x'):
     py_x_e = []
+    count = 0
     for mu, leaf_p in zip(mu_e, leaf_p_e):
         # average all the leaf p
         py_x_tree = tf.reduce_mean(
             tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
-                   tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])), 1)
+                        tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])),
+            1,
+            name='py_x_tree_{:d}'.format(count))
         py_x_e.append(py_x_tree)
+        count += 1
 
-    py_x_e = tf.stack(py_x_e)
-    py_x = tf.reduce_mean(py_x_e, 0)
+    py_x_e = tf.stack(py_x_e, name='py_x_e')
+    py_x = tf.reduce_mean(py_x_e, 0, name='py_x')
 
 ##################################################
 # Define cost and optimization method
@@ -414,7 +425,6 @@ train_writer = tf.summary.FileWriter('tb_logs' + '/train', sess.graph)
 
 sess.run(tf.initialize_all_variables())
 
-
 import time
 t0 = time.time()
 for i in range(100):
@@ -429,10 +439,13 @@ for i in range(100):
     # Result on the test set
     results = []
     for start, end in zip(range(0, len(teX), N_BATCH), range(N_BATCH, len(teX), N_BATCH)):
-        results.extend(np.argmax(teY[start:end], axis=1) ==
-            sess.run(predict, feed_dict={X: teX[start:end], p_keep_conv: 1.0,
-                                         p_keep_hidden: 1.0}))
-
-    print('Epoch: %d, Test Accuracy: %f' % (i + 1, np.mean(results)))
+        y_pred = sess.run(predict, feed_dict={X             : teX[start:end],
+                                              p_keep_conv   : 1.0,
+                                              p_keep_hidden : 1.0})
+        results.extend(
+            np.argmax(teY[start:end], axis=1) == y_pred
+            )
+        accu_test = np.mean(results)
+    print('Epoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
     print(time.time() - t0)
 
