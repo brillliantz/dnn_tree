@@ -392,12 +392,18 @@ py_x = tf.reduce_mean(py_x_e, 0)
 
 # cross entropy loss
 cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y))
+tf.summary.scalar('cross_entropy', cost)
 
 # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
 train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
 predict = tf.argmax(py_x, 1)
 
 sess = tf.Session()
+
+# summary writer
+merged = tf.summary.merge_all()
+train_writer = tf.summary.FileWriter('tb_logs' + '/train', sess.graph)
+
 sess.run(tf.initialize_all_variables())
 
 
@@ -406,8 +412,11 @@ t0 = time.time()
 for i in range(100):
     # One epoch
     for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
-        sess.run(train_step, feed_dict={X: trX[start:end], Y: trY[start:end],
+        print("start {} - end {}".format(start, end))
+        summary_train, _ = sess.run([merged, train_step], feed_dict={X: trX[start:end], Y: trY[start:end],
                                         p_keep_conv: 0.8, p_keep_hidden: 0.5})
+        train_writer.add_summary(summary_train, i)
+        train_writer.flush()
 
     # Result on the test set
     results = []
@@ -418,3 +427,4 @@ for i in range(100):
 
     print('Epoch: %d, Test Accuracy: %f' % (i + 1, np.mean(results)))
     print(time.time() - t0)
+
