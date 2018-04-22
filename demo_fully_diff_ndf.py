@@ -192,12 +192,12 @@ N_TREE  = 5                 # Number of trees (ensemble)
 N_BATCH = 128               # Number of data points per mini-batch
 
 
-def init_weights(shape):
-    return tf.Variable(tf.random_normal(shape, stddev=0.01))
+def init_weights(shape, name=None):
+    return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
 
 
-def init_prob_weights(shape, minval=-5, maxval=5):
-    return tf.Variable(tf.random_uniform(shape, minval, maxval))
+def init_prob_weights(shape, minval=-5, maxval=5, name=None):
+    return tf.Variable(tf.random_uniform(shape, minval, maxval), name=name)
 
 
 def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
@@ -266,17 +266,21 @@ Y = tf.placeholder("float", [N_BATCH, N_LABEL])
 ##################################################
 # Initialize network weights
 ##################################################
-w = init_weights([3, 3, 1, 32])
-w2 = init_weights([3, 3, 32, 64])
-w3 = init_weights([3, 3, 64, 128])
+with tf.name_scope('network_weights'):
+    w = init_weights([3, 3, 1, 32], name='w')
+    w2 = init_weights([3, 3, 32, 64], name='w1')
+    w3 = init_weights([3, 3, 64, 128], name='w3')
 
-w4_ensemble = []
-w_d_ensemble = []
-w_l_ensemble = []
-for i in range(N_TREE):
-    w4_ensemble.append(init_weights([128 * 4 * 4, 625]))
-    w_d_ensemble.append(init_prob_weights([625, N_LEAF], -1, 1))
-    w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2))
+    w4_ensemble = []
+    w_d_ensemble = []
+    w_l_ensemble = []
+    for i in range(N_TREE):
+        w4_ensemble.append(init_weights([128 * 4 * 4, 625],
+                                        name='w4_ensemble_{:d}'.format(i)))
+        w_d_ensemble.append(init_prob_weights([625, N_LEAF], -1, 1,
+                                        name='w_d_ensemble_{:d}'.format(i)))
+        w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
+                                        name='w_l_ensemble_{:d}'.format(i)))
 
 p_keep_conv = tf.placeholder("float")
 p_keep_hidden = tf.placeholder("float")
@@ -284,29 +288,30 @@ p_keep_hidden = tf.placeholder("float")
 ##################################################
 # Define a fully differentiable deep-ndf
 ##################################################
-# With the probability decision_p, route a sample to the right branch
-decision_p_e, leaf_p_e = model(X, w, w2, w3, w4_ensemble, w_d_ensemble,
-                               w_l_ensemble, p_keep_conv, p_keep_hidden)
+with tf.name_scope('dNDF_model'):
+    # With the probability decision_p, route a sample to the right branch
+    decision_p_e, leaf_p_e = model(X, w, w2, w3, w4_ensemble, w_d_ensemble,
+                                   w_l_ensemble, p_keep_conv, p_keep_hidden)
 
-flat_decision_p_e = []
+    flat_decision_p_e = []
 
-# iterate over each tree
-for decision_p in decision_p_e:
-    # Compute the complement of d, which is 1 - d
-    # where d is the sigmoid of fully connected output
-    decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p)
+    # iterate over each tree
+    for decision_p in decision_p_e:
+        # Compute the complement of d, which is 1 - d
+        # where d is the sigmoid of fully connected output
+        decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p)
 
-    # Concatenate both d, 1-d
-    decision_p_pack = tf.stack([decision_p, decision_p_comp])
+        # Concatenate both d, 1-d
+        decision_p_pack = tf.stack([decision_p, decision_p_comp])
 
-    # Flatten/vectorize the decision probabilities for efficient indexing
-    flat_decision_p = tf.reshape(decision_p_pack, [-1])
-    flat_decision_p_e.append(flat_decision_p)
+        # Flatten/vectorize the decision probabilities for efficient indexing
+        flat_decision_p = tf.reshape(decision_p_pack, [-1])
+        flat_decision_p_e.append(flat_decision_p)
 
-# 0 index of each data instance in a mini-batch
-batch_0_indices = \
-    tf.tile(tf.expand_dims(tf.range(0, N_BATCH * N_LEAF, N_LEAF), 1),
-            [1, N_LEAF])
+    # 0 index of each data instance in a mini-batch
+    batch_0_indices = \
+        tf.tile(tf.expand_dims(tf.range(0, N_BATCH * N_LEAF, N_LEAF), 1),
+                [1, N_LEAF])
 
 ###############################################################################
 # The routing probability computation
@@ -331,72 +336,75 @@ batch_0_indices = \
 #    1   2
 #   3 4 5 6
 ##############################################################################
-in_repeat = N_LEAF // 2
-out_repeat = N_BATCH
+with tf.name_scope('route_prob'):
+    in_repeat = N_LEAF // 2
+    out_repeat = N_BATCH
 
-# Let N_BATCH * N_LEAF be N_D. flat_decision_p[N_D] will return 1-d of the
-# first root node in the first tree.
-batch_complement_indices = \
-    np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
-             * out_repeat).reshape(N_BATCH, N_LEAF)
-
-# First define the routing probabilities d for root nodes
-mu_e = []
-
-# iterate over each tree
-for i, flat_decision_p in enumerate(flat_decision_p_e):
-    mu = tf.gather(flat_decision_p,
-                   tf.add(batch_0_indices, batch_complement_indices))
-    mu_e.append(mu)
-
-# from the second layer to the last layer, we make the decision nodes
-for d in range(1, DEPTH + 1):
-    indices = tf.range(2 ** d, 2 ** (d + 1)) - 1
-    tile_indices = tf.reshape(tf.tile(tf.expand_dims(indices, 1),
-                                      [1, 2 ** (DEPTH - d + 1)]), [1, -1])
-    batch_indices = tf.add(batch_0_indices, tf.tile(tile_indices, [N_BATCH, 1]))
-
-    in_repeat = in_repeat // 2
-    out_repeat = out_repeat * 2
-
-    # Again define the indices that picks d and 1-d for the node
+    # Let N_BATCH * N_LEAF be N_D. flat_decision_p[N_D] will return 1-d of the
+    # first root node in the first tree.
     batch_complement_indices = \
         np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
                  * out_repeat).reshape(N_BATCH, N_LEAF)
 
-    mu_e_update = []
-    for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
-        mu = tf.multiply(mu, tf.gather(flat_decision_p,
-                                  tf.add(batch_indices, batch_complement_indices)))
-        mu_e_update.append(mu)
+    # First define the routing probabilities d for root nodes
+    mu_e = []
 
-    mu_e = mu_e_update
+    # iterate over each tree
+    for i, flat_decision_p in enumerate(flat_decision_p_e):
+        mu = tf.gather(flat_decision_p,
+                       tf.add(batch_0_indices, batch_complement_indices))
+        mu_e.append(mu)
+
+    # from the second layer to the last layer, we make the decision nodes
+    for d in range(1, DEPTH + 1):
+        indices = tf.range(2 ** d, 2 ** (d + 1)) - 1
+        tile_indices = tf.reshape(tf.tile(tf.expand_dims(indices, 1),
+                                          [1, 2 ** (DEPTH - d + 1)]), [1, -1])
+        batch_indices = tf.add(batch_0_indices, tf.tile(tile_indices, [N_BATCH, 1]))
+
+        in_repeat = in_repeat // 2
+        out_repeat = out_repeat * 2
+
+        # Again define the indices that picks d and 1-d for the node
+        batch_complement_indices = \
+            np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
+                     * out_repeat).reshape(N_BATCH, N_LEAF)
+
+        mu_e_update = []
+        for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
+            mu = tf.multiply(mu, tf.gather(flat_decision_p,
+                                      tf.add(batch_indices, batch_complement_indices)))
+            mu_e_update.append(mu)
+
+        mu_e = mu_e_update
 
 ##################################################
 # Define p(y|x)
 ##################################################
-py_x_e = []
-for mu, leaf_p in zip(mu_e, leaf_p_e):
-    # average all the leaf p
-    py_x_tree = tf.reduce_mean(
-        tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
-               tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])), 1)
-    py_x_e.append(py_x_tree)
+with tf.name_scope('P_y_cond_x'):
+    py_x_e = []
+    for mu, leaf_p in zip(mu_e, leaf_p_e):
+        # average all the leaf p
+        py_x_tree = tf.reduce_mean(
+            tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
+                   tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])), 1)
+        py_x_e.append(py_x_tree)
 
-py_x_e = tf.stack(py_x_e)
-py_x = tf.reduce_mean(py_x_e, 0)
+    py_x_e = tf.stack(py_x_e)
+    py_x = tf.reduce_mean(py_x_e, 0)
 
 ##################################################
 # Define cost and optimization method
 ##################################################
 
-# cross entropy loss
-cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y))
-tf.summary.scalar('cross_entropy', cost)
+with tf.name_scope('cost_opt'):
+    # cross entropy loss
+    cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost')
+    tf.summary.scalar('cross_entropy', cost)
 
-# cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
-train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
-predict = tf.argmax(py_x, 1)
+    # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
+    train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
+    predict = tf.argmax(py_x, 1, name='predict')
 
 sess = tf.Session()
 
