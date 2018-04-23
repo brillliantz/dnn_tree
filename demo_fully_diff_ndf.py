@@ -251,11 +251,12 @@ def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
     leaf_p_e = []
     count = 0
     for w4, w_d, w_l in zip(w4_e, w_d_e, w_l_e):
+        #with tf.name_scope(get_tree_name(count) + '/' + 'FullyConnected/'):
+        with tf.name_scope('FullyConnected-{:d}/'.format(count)):
+            # n_loops = N_TREES
+            l4 = tf.nn.relu(tf.matmul(l3, w4, name='FC_MatMul'), name='FC_act')
+            l4 = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
         with tf.name_scope(get_tree_name(count)+'/'):
-            with tf.name_scope(get_tree_name(count) + '/' + 'FullyConnected/'):
-                # n_loops = N_TREES
-                l4 = tf.nn.relu(tf.matmul(l3, w4, name='FC_MatMul'), name='FC_act')
-                l4 = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
                     
             # d_n (x) = \sigma ( f_n (x) )
             decision_p = tf.nn.sigmoid(tf.matmul(l4, w_d), name='DecisionNode_{:d}'.format(count))
@@ -296,10 +297,11 @@ w4_ensemble = []
 w_d_ensemble = []
 w_l_ensemble = []
 for i in range(N_TREE):
+    #with tf.name_scope(get_tree_name(i) + '/' + 'FullyConnected/'):
+    with tf.name_scope('FullyConnected-{:d}/'.format(i)):
+        w4_ensemble.append(init_weights([128 * 4 * 4, 625],
+                           name='w4_ensemble_{:d}'.format(i)))
     with tf.name_scope(get_tree_name(i) + '/'):
-        with tf.name_scope(get_tree_name(i) + '/' + 'FullyConnected/'):
-            w4_ensemble.append(init_weights([128 * 4 * 4, 625],
-                                            name='w4_ensemble_{:d}'.format(i)))
         w_d_ensemble.append(init_prob_weights([625, N_LEAF], -1, 1,
                                         name='w_d_ensemble_{:d}'.format(i)))
         w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
