@@ -180,6 +180,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+
+"""
+Leaf Node: random_uniform -> soft_max -> *mu -> py_x_tree -> py_x_e -> py_x -> cross_entrophy
+"""
+
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 
