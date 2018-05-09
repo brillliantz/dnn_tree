@@ -468,13 +468,35 @@ with tf.name_scope('P_y_cond_x'):
     # summary
     variable_summaries(py_x, name='py_x')
 
+
+def get_ladder(tick=1.0):
+    mid = 0.0
+    n_levels = N_LABEL
+    if n_levels % 2 == 0:
+        lower = mid - tick * (n_levels / 2)
+        upper = mid + tick * (n_levels / 2)
+    else:
+        lower = mid - tick * (n_levels // 2 + 0.5)
+        upper = mid + tick * (n_levels // 2 + 0.5)
+
+    return tf.linspace(lower, upper, n_levels)
+
+with tf.name_scope("continuous_output"):
+    ladder = get_ladder()
+    ladder_batch = tf.tile(tf.expand_dims(ladder, 0), [N_BATCH, 1])
+    y_pred_node = tf.reduce_sum(tf.multiply(py_x, ladder_batch), axis=1, name='Y_pred')
+
 ##################################################
 # Define cost and optimization method
 ##################################################
 
 with tf.name_scope('cost_opt'):
     # cross entropy loss
-    cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost')
+    cost = tf.reduce_sum(
+        tf.losses.mean_squared_error(Y, y_pred_node),
+        name="MSE"
+    )
+    # cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost') # brz
     tf.summary.scalar('cross_entropy', cost)
 
     # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
