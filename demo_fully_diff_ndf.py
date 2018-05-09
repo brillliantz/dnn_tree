@@ -180,6 +180,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+
+# use limited GPU resources
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 
@@ -207,6 +209,7 @@ def init_prob_weights(shape, minval=-5, maxval=5, name=None):
 
 def get_tree_name(n):
     return "TREE-{:d}".format(n)
+
 
 def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
     """
@@ -272,15 +275,22 @@ def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
 ##################################################
 # Load dataset
 ##################################################
+input_shape_without_batch = (28, 28, 1)
+input_reshape_arg = np.hstack([(-1, ),
+                               input_shape_without_batch]).tolist()
+input_shape = np.hstack([(N_BATCH, ),
+                         input_shape_without_batch]).tolist()
+output_shape = [N_BATCH, N_LABEL]
+
 mnist = input_data.read_data_sets("Data/MNIST/", one_hot=True)
 trX, trY = mnist.train.images, mnist.train.labels
 teX, teY = mnist.test.images, mnist.test.labels
-trX = trX.reshape(-1, 28, 28, 1)
-teX = teX.reshape(-1, 28, 28, 1)
+trX = trX.reshape(*input_reshape_arg)
+teX = teX.reshape(*input_reshape_arg)
 
 # Input X, output Y
-X = tf.placeholder("float", [N_BATCH, 28, 28, 1], 'X')
-Y = tf.placeholder("float", [N_BATCH, N_LABEL], 'Y')
+X = tf.placeholder("float", shape=input_shape, name='X')
+Y = tf.placeholder("float", shape=output_shape, name='Y')
 
 ##################################################
 # Initialize network weights
