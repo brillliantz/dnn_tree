@@ -200,6 +200,7 @@ N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
 N_BATCH = 60               # Number of data points per mini-batch
 
+FC_output_dim = 625
 
 def define_ndf():
     def init_weights(shape, name=None):
@@ -235,23 +236,23 @@ def define_ndf():
         with tf.name_scope("CNN/"):
             with tf.name_scope('CNN/layer-1/'):
                 l1a = tf.nn.relu(tf.nn.conv2d(X, w, [1, 1, 1, 1], 'SAME'), name='l1a')
-                l1 = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
+                l1b = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
                                     strides=[1, 2, 2, 1], padding='SAME', name='l1_')
-                l1 = tf.nn.dropout(l1, p_keep_conv, name='l1')
+                l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
 
             with tf.name_scope('CNN/layer-2/'):
                 l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
-                l2 = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
+                l2b = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
                                     strides=[1, 2, 2, 1], padding='SAME', name='l2_')
-                l2 = tf.nn.dropout(l2, p_keep_conv, name='l2')
+                l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
 
             with tf.name_scope('CNN/layer-3/'):
                 l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
-                l3 = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
+                l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
                                     strides=[1, 2, 2, 1], padding='SAME', name='l3_')
 
-                l3 = tf.reshape(l3, [-1, w4_e[0].get_shape().as_list()[0]], name='l3_reshape')
-                l3 = tf.nn.dropout(l3, p_keep_conv, name='l3')
+                l3c = tf.reshape(l3b, [-1, w4_e[0].get_shape().as_list()[0]], name='l3_reshape')
+                l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
 
         decision_p_e = []
         leaf_p_e = []
@@ -287,6 +288,7 @@ def define_ndf():
     ##################################################
     with tf.name_scope("CNN"):
         with tf.name_scope("CNN/layer-1/"):
+            # [filter_height, filter_width, in_channels, out_channels]
             w = init_weights([3, 3, 1, 32], name='w1')
         with tf.name_scope("CNN/layer-2/"):
             w2 = init_weights([3, 3, 32, 64], name='w2')
@@ -299,10 +301,12 @@ def define_ndf():
     for i in range(N_TREE):
         #with tf.name_scope(get_tree_name(i) + '/' + 'FullyConnected/'):
         with tf.name_scope('FullyConnected-{:d}/'.format(i)):
-            w4_ensemble.append(init_weights([128 * 4 * 4, 625],
+            # FC layer input dim = output dim of upper network
+            # 128 channels, 4 = round(28 / 2 / 2 / 2) (max-pooling)
+            w4_ensemble.append(init_weights([128 * 4 * 4, FC_output_dim],
                                             name='w4_ensemble_{:d}'.format(i)))
         with tf.name_scope(get_tree_name(i) + '/'):
-            w_d_ensemble.append(init_prob_weights([625, N_LEAF], -1, 1,
+            w_d_ensemble.append(init_prob_weights([FC_output_dim, N_LEAF], -1, 1,
                                                   name='w_d_ensemble_{:d}'.format(i)))
         w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
                                               name='w_l_ensemble_{:d}'.format(i)))
@@ -459,6 +463,7 @@ def load_custom_data():
     trX, trY = mnist.train.images, mnist.train.labels
     teX, teY = mnist.test.images, mnist.test.labels
 
+    # Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
     input_shape_without_batch = (28, 28, 1)
 
     """
@@ -472,7 +477,10 @@ def load_custom_data():
     import sklearn.model_selection
     trX, teX, trY, teY = sklearn.model_selection.train_test_split(X, Y, test_size=0.3, shuffle=True,
                                                                   random_state=369)
-    input_shape_without_batch = (28, 28, 1)
+    n_cols = X.shape[1]
+    width = n_cols
+    height = 1
+    input_shape_without_batch = (width, height, 1)
     """
 
     # common transform
