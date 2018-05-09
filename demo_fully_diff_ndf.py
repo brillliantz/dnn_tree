@@ -183,6 +183,17 @@ SOFTWARE.
 
 """
 Leaf Node: random_uniform -> soft_max -> *mu -> py_x_tree -> py_x_e -> py_x -> cross_entrophy
+
+random_uniform weights: [n_leaf, n_class]                               range [-x, x]
+nn.softmax: [n_leaf, n_class]                                           range [0, 1]
+add batch dimension: [n_batch, n_leaf, n_class]                         range [0, 1]
+leaf probability: [n_batch, n_leaf, n_class]                            range [0, 1]
+routing probability: [n_batch, n_leaf, n_class]                         range [0, 1]
+prob = routing_prob * leaf_prob = [n_batch, n_leaf, n_class]            range [0, 1]
+P(Y | X) = reduce_mean(prob) = [n_batch, n_class]                       range [0, 1]
+
+For each sample in a batch, P(Y | X) are probabilities of each class.
+
 """
 
 import os
@@ -200,6 +211,19 @@ N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
 N_BATCH = 60               # Number of data points per mini-batch
+
+
+def variable_summaries(var, name=''):
+  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+  with tf.name_scope('sum' + name):
+    mean = tf.reduce_mean(var)
+    tf.summary.scalar('mean', mean)
+    with tf.name_scope('stddev'):
+      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+    tf.summary.scalar('stddev', stddev)
+    tf.summary.scalar('max', tf.reduce_max(var))
+    tf.summary.scalar('min', tf.reduce_min(var))
+    tf.summary.histogram('histogram', var)
 
 
 def init_weights(shape, name=None):
@@ -320,8 +344,10 @@ p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
 ##################################################
 #with tf.name_scope('dNDF_model'):
 # With the probability decision_p, route a sample to the right branch
+[variable_summaries(w_l__, name='leaf_weights') for w_l__ in w_l_ensemble]
 decision_p_e, leaf_p_e = model(X, w, w2, w3, w4_ensemble, w_d_ensemble,
                                w_l_ensemble, p_keep_conv, p_keep_hidden)
+[variable_summaries(leaf_p__, name='leaf_prob') for leaf_p__ in leaf_p_e]
 
 #with tf.name_scope('vec_decision_probs'):
 flat_decision_p_e = []
@@ -436,8 +462,11 @@ with tf.name_scope('P_y_cond_x'):
             py_x_e.append(py_x_tree)
             count += 1
 
+    [variable_summaries(py_x_e_elem, name='py_x_ensemble') for py_x_e_elem in py_x_e]
     py_x_e = tf.stack(py_x_e, name='py_x_e')
     py_x = tf.reduce_mean(py_x_e, 0, name='py_x')
+    # summary
+    variable_summaries(py_x, name='py_x')
 
 ##################################################
 # Define cost and optimization method
