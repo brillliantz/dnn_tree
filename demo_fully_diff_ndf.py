@@ -301,7 +301,7 @@ def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
 ##################################################
 # Load dataset
 ##################################################
-mnist = input_data.read_data_sets("MNIST/", one_hot=True)
+mnist = input_data.read_data_sets("Data/MNIST/", one_hot=True)
 trX, trY = mnist.train.images, mnist.train.labels
 teX, teY = mnist.test.images, mnist.test.labels
 trX = trX.reshape(-1, 28, 28, 1)
