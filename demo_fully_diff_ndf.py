@@ -189,6 +189,7 @@ import tensorflow as tf
 gpuconfig = tf.ConfigProto()
 gpuconfig.gpu_options.allow_growth = True
 
+import math
 import numpy as np
 import pandas as pd
 import sklearn
@@ -198,9 +199,10 @@ DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
-N_BATCH = 60               # Number of data points per mini-batch
+N_BATCH = 77               # Number of data points per mini-batch
 
 FC_output_dim = 625
+
 
 def define_ndf():
     def init_weights(shape, name=None):
@@ -214,8 +216,64 @@ def define_ndf():
     def get_tree_name(n):
         return "TREE-{:d}".format(n)
 
+    def upper_model_dnn(x, n_features, layer_sizes=(50, 50, 50)):
+        """Only support 1-d data (no image). """
+        def get_stddev(in_dim, out_dim):
+            return 1.3 / math.sqrt(float(in_dim) + float(out_dim))
 
-    def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
+        hidden = []
+
+        with tf.name_scope("CNN/"):
+            # Input Layer
+            with tf.name_scope("input-layer"):
+                weights = tf.Variable(tf.truncated_normal([n_features, layer_sizes[0]],
+                                                          stddev=get_stddev(n_features, layer_sizes[0])),
+                                      name='weights')
+                biases = tf.Variable(tf.zeros([layer_sizes[0]]), name='biases')
+                input = tf.matmul(x, weights) + biases
+
+            # Hidden Layers
+            for index, num_hidden in enumerate(layer_sizes):
+                if index == len(layer_sizes) - 1: break
+                with tf.name_scope("hidden{}".format(index + 1)):
+                    weights = tf.Variable(tf.truncated_normal([num_hidden, layer_sizes[index + 1]],
+                                                              stddev=get_stddev(num_hidden,
+                                                                                layer_sizes[index + 1])),
+                                          name='weights')
+                    biases = tf.Variable(tf.zeros([layer_sizes[index + 1]]), name='biases')
+                    inputs = input if index == 0 else hidden[index - 1]
+                    hidden.append(tf.nn.relu(tf.matmul(inputs, weights) + biases,
+                                             name="hidden{}".format(index + 1)))
+
+        final_layer = hidden[-1]
+        return final_layer, layer_sizes[-1]
+
+    def upper_model_cnn(X, w1, w2, w3, p_keep_conv):
+        with tf.name_scope("CNN/"):
+            with tf.name_scope('CNN/layer-1/'):
+                l1a = tf.nn.relu(tf.nn.conv2d(X, w1, [1, 1, 1, 1], 'SAME'), name='l1a')
+                l1b = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l1_')
+                l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
+
+            with tf.name_scope('CNN/layer-2/'):
+                l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
+                l2b = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l2_')
+                l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
+
+            with tf.name_scope('CNN/layer-3/'):
+                l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
+                l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l3_')
+
+                l3c = tf.reshape(l3b, [N_BATCH, -1], name='l3_reshape')
+                l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
+
+        final_layer = l3
+        return final_layer, 4 * 4 * 128
+
+    def model(upper_layer, w4_e, w_d_e, w_l_e, p_keep_hidden):
         """
         Create a forest and return the neural decision forest outputs:
 
@@ -233,26 +291,6 @@ def define_ndf():
             """
         assert(len(w4_e) == len(w_d_e))
         assert(len(w4_e) == len(w_l_e))
-        with tf.name_scope("CNN/"):
-            with tf.name_scope('CNN/layer-1/'):
-                l1a = tf.nn.relu(tf.nn.conv2d(X, w, [1, 1, 1, 1], 'SAME'), name='l1a')
-                l1b = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
-                                    strides=[1, 2, 2, 1], padding='SAME', name='l1_')
-                l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
-
-            with tf.name_scope('CNN/layer-2/'):
-                l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
-                l2b = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
-                                    strides=[1, 2, 2, 1], padding='SAME', name='l2_')
-                l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
-
-            with tf.name_scope('CNN/layer-3/'):
-                l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
-                l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
-                                    strides=[1, 2, 2, 1], padding='SAME', name='l3_')
-
-                l3c = tf.reshape(l3b, [-1, w4_e[0].get_shape().as_list()[0]], name='l3_reshape')
-                l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
 
         decision_p_e = []
         leaf_p_e = []
@@ -261,7 +299,7 @@ def define_ndf():
             #with tf.name_scope(get_tree_name(count) + '/' + 'FullyConnected/'):
             with tf.name_scope('FullyConnected-{:d}/'.format(count)):
                 # n_loops = N_TREES
-                l4 = tf.nn.relu(tf.matmul(l3, w4, name='FC_MatMul'), name='FC_act')
+                l4 = tf.nn.relu(tf.matmul(upper_layer, w4, name='FC_MatMul'), name='FC_act')
                 l4 = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
             with tf.name_scope(get_tree_name(count)+'/'):
 
@@ -286,14 +324,20 @@ def define_ndf():
     ##################################################
     # Initialize network weights
     ##################################################
+    p_keep_conv = tf.placeholder("float", name='p_keep_conv')
+    p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
+
     with tf.name_scope("CNN"):
         with tf.name_scope("CNN/layer-1/"):
             # [filter_height, filter_width, in_channels, out_channels]
-            w = init_weights([3, 3, 1, 32], name='w1')
+            w1 = init_weights([3, 3, 1, 32], name='w1')
         with tf.name_scope("CNN/layer-2/"):
             w2 = init_weights([3, 3, 32, 64], name='w2')
         with tf.name_scope("CNN/layer-3/"):
             w3 = init_weights([3, 3, 64, 128], name='w3')
+
+    # final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
+    final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[10] * 10)
 
     w4_ensemble = []
     w_d_ensemble = []
@@ -303,7 +347,7 @@ def define_ndf():
         with tf.name_scope('FullyConnected-{:d}/'.format(i)):
             # FC layer input dim = output dim of upper network
             # 128 channels, 4 = round(28 / 2 / 2 / 2) (max-pooling)
-            w4_ensemble.append(init_weights([128 * 4 * 4, FC_output_dim],
+            w4_ensemble.append(init_weights([final_layer_size, FC_output_dim],
                                             name='w4_ensemble_{:d}'.format(i)))
         with tf.name_scope(get_tree_name(i) + '/'):
             w_d_ensemble.append(init_prob_weights([FC_output_dim, N_LEAF], -1, 1,
@@ -311,16 +355,13 @@ def define_ndf():
         w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
                                               name='w_l_ensemble_{:d}'.format(i)))
 
-    p_keep_conv = tf.placeholder("float", name='p_keep_conv')
-    p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
-
     ##################################################
     # Define a fully differentiable deep-ndf
     ##################################################
-    #with tf.name_scope('dNDF_model'):
     # With the probability decision_p, route a sample to the right branch
-    decision_p_e, leaf_p_e = model(X, w, w2, w3, w4_ensemble, w_d_ensemble,
-                                   w_l_ensemble, p_keep_conv, p_keep_hidden)
+
+    decision_p_e, leaf_p_e = model(final_layer_of_upper_model, w4_ensemble, w_d_ensemble,
+                                   w_l_ensemble, p_keep_hidden)
 
     #with tf.name_scope('vec_decision_probs'):
     flat_decision_p_e = []
@@ -458,30 +499,35 @@ def define_ndf():
 def load_custom_data():
     #
 
+    """
     # load data: MNIST
     mnist = input_data.read_data_sets("Data/MNIST/", one_hot=True)
     trX, trY = mnist.train.images, mnist.train.labels
     teX, teY = mnist.test.images, mnist.test.labels
 
     # Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
-    input_shape_without_batch = (28, 28, 1)
+    # input_shape_without_batch = (28, 28, 1)
+
+    # if use dnn
+    input_shape_without_batch = (28 * 28, )
 
     """
     # wine quality data
-    data = pd.read_csv('Data/wine_quality/winequality-red.csv', delimiter=';')
+    data = pd.read_csv('Data/wine_quality/winequality-white.csv', delimiter=';')
 
     X = data.iloc[:, :-1]
-    Y = data.iloc[:, -1]
+    Y = data.iloc[:, [-1]]
     X = X.values
     Y = Y.values
+
+    import sklearn.preprocessing
+    Y = sklearn.preprocessing.OneHotEncoder(n_values=10, sparse=False).fit_transform(Y)
+
     import sklearn.model_selection
     trX, teX, trY, teY = sklearn.model_selection.train_test_split(X, Y, test_size=0.3, shuffle=True,
                                                                   random_state=369)
     n_cols = X.shape[1]
-    width = n_cols
-    height = 1
-    input_shape_without_batch = (width, height, 1)
-    """
+    input_shape_without_batch = (n_cols, )
 
     # common transform
     input_reshape_arg = np.hstack([(-1, ),
@@ -514,7 +560,8 @@ def init_and_run():
     for i in range(100):
         # One epoch
         for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
-            print("start {} - end {}".format(start, end))
+            # print("start {} - end {}".format(start, end))
+            print('.', end='')
             summary_train, _ = sess.run([merged, train_step], feed_dict={X_in          : trX[start:end],
                                                                          Y_in          : trY[start:end],
                                                                          p_keep_conv   : 0.8,
@@ -532,7 +579,7 @@ def init_and_run():
                 np.argmax(teY[start:end], axis=1) == y_pred
                 )
             accu_test = np.mean(results)
-        print('Epoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
+        print('\nEpoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
         print(time.time() - t0)
 
 
