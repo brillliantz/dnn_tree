@@ -196,6 +196,7 @@ For each sample in a batch, P(Y | X) are probabilities of each class.
 
 """
 
+# use limited GPU resources
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 
@@ -203,272 +204,390 @@ import tensorflow as tf
 gpuconfig = tf.ConfigProto()
 gpuconfig.gpu_options.allow_growth = True
 
+import math
 import numpy as np
-import tensorflow.examples.tutorials.mnist.input_data as input_data
+import pandas as pd
+import sklearn
 
 DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
-N_BATCH = 60               # Number of data points per mini-batch
+N_BATCH = 77               # Number of data points per mini-batch
+
+FC_output_dim = 625
 
 
 def variable_summaries(var, name=''):
-  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-  with tf.name_scope('sum' + name):
-    mean = tf.reduce_mean(var)
-    tf.summary.scalar('mean', mean)
-    with tf.name_scope('stddev'):
-      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-    tf.summary.scalar('stddev', stddev)
-    tf.summary.scalar('max', tf.reduce_max(var))
-    tf.summary.scalar('min', tf.reduce_min(var))
-    tf.summary.histogram('histogram', var)
+    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+    with tf.name_scope('sum' + name):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean', mean)
+        with tf.name_scope('stddev'):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('stddev', stddev)
+        tf.summary.scalar('max', tf.reduce_max(var))
+        tf.summary.scalar('min', tf.reduce_min(var))
+        tf.summary.histogram('histogram', var)
 
 
-def init_weights(shape, name=None):
-    return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
+def define_ndf():
+    def init_weights(shape, name=None):
+        return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
 
+    def init_prob_weights(shape, minval=-5, maxval=5, name=None):
+        return tf.Variable(tf.random_uniform(shape, minval, maxval), name=name)
 
-def init_prob_weights(shape, minval=-5, maxval=5, name=None):
-    return tf.Variable(tf.random_uniform(shape, minval, maxval), name=name)
+    def get_tree_name(n):
+        return "TREE-{:d}".format(n)
 
+    def upper_model_dnn(x, n_features, layer_sizes=(50, 50, 50)):
+        """Only support 1-d data (no image). """
+        def get_stddev(in_dim, out_dim):
+            return 1.3 / math.sqrt(float(in_dim) + float(out_dim))
 
-def get_tree_name(n):
-    return "TREE-{:d}".format(n)
+        hidden = []
 
-def model(X, w, w2, w3, w4_e, w_d_e, w_l_e, p_keep_conv, p_keep_hidden):
-    """
-    Create a forest and return the neural decision forest outputs:
+        with tf.name_scope("CNN/"):
+            # Input Layer
+            with tf.name_scope("input-layer"):
+                weights = tf.Variable(tf.truncated_normal([n_features, layer_sizes[0]],
+                                                          stddev=get_stddev(n_features, layer_sizes[0])),
+                                      name='weights')
+                biases = tf.Variable(tf.zeros([layer_sizes[0]]), name='biases')
+                input = tf.matmul(x, weights) + biases
 
-        decision_p_e: decision node routing probability for all ensemble
-            If we number all nodes in the tree sequentially from top to bottom,
-            left to right, decision_p contains
-            [d(0), d(1), d(2), ..., d(2^n - 2)] where d(1) is the probability
-            of going left at the root node, d(2) is that of the left child of
-            the root node.
+            # Hidden Layers
+            for index, num_hidden in enumerate(layer_sizes):
+                if index == len(layer_sizes) - 1: break
+                with tf.name_scope("hidden{}".format(index + 1)):
+                    weights = tf.Variable(tf.truncated_normal([num_hidden, layer_sizes[index + 1]],
+                                                              stddev=get_stddev(num_hidden,
+                                                                                layer_sizes[index + 1])),
+                                          name='weights')
+                    biases = tf.Variable(tf.zeros([layer_sizes[index + 1]]), name='biases')
+                    inputs = input if index == 0 else hidden[index - 1]
+                    hidden.append(tf.nn.relu(tf.matmul(inputs, weights) + biases,
+                                             name="hidden{}".format(index + 1)))
 
-            decision_p_e is the concatenation of all tree decision_p's
+        final_layer = hidden[-1]
+        return final_layer, layer_sizes[-1]
 
-        leaf_p_e: terminal node probability distributions for all ensemble. The
-            indexing is the same as that of decision_p_e.
-    """
-    assert(len(w4_e) == len(w_d_e))
-    assert(len(w4_e) == len(w_l_e))
-    with tf.name_scope("CNN/"):
-        with tf.name_scope('CNN/layer-1/'):
-            l1a = tf.nn.relu(tf.nn.conv2d(X, w, [1, 1, 1, 1], 'SAME'), name='l1a')
-            l1 = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
-                                strides=[1, 2, 2, 1], padding='SAME', name='l1_')
-            l1 = tf.nn.dropout(l1, p_keep_conv, name='l1')
+    def upper_model_cnn(X, w1, w2, w3, p_keep_conv):
+        with tf.name_scope("CNN/"):
+            with tf.name_scope('CNN/layer-1/'):
+                l1a = tf.nn.relu(tf.nn.conv2d(X, w1, [1, 1, 1, 1], 'SAME'), name='l1a')
+                l1b = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l1_')
+                l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
 
-        with tf.name_scope('CNN/layer-2/'):
-            l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
-            l2 = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
-                                strides=[1, 2, 2, 1], padding='SAME', name='l2_')
-            l2 = tf.nn.dropout(l2, p_keep_conv, name='l2')
+            with tf.name_scope('CNN/layer-2/'):
+                l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
+                l2b = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l2_')
+                l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
 
-        with tf.name_scope('CNN/layer-3/'):
-            l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
-            l3 = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
-                                strides=[1, 2, 2, 1], padding='SAME', name='l3_')
+            with tf.name_scope('CNN/layer-3/'):
+                l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
+                l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l3_')
 
-            l3 = tf.reshape(l3, [-1, w4_e[0].get_shape().as_list()[0]], name='l3_reshape')
-            l3 = tf.nn.dropout(l3, p_keep_conv, name='l3')
+                l3c = tf.reshape(l3b, [N_BATCH, -1], name='l3_reshape')
+                l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
 
-    decision_p_e = []
-    leaf_p_e = []
+        final_layer = l3
+        return final_layer, 4 * 4 * 128
+
+    def model(upper_layer, w4_e, w_d_e, w_l_e, p_keep_hidden):
+        """
+        Create a forest and return the neural decision forest outputs:
+
+            decision_p_e: decision node routing probability for all ensemble
+                If we number all nodes in the tree sequentially from top to bottom,
+                left to right, decision_p contains
+                [d(0), d(1), d(2), ..., d(2^n - 2)] where d(1) is the probability
+                of going left at the root node, d(2) is that of the left child of
+                the root node.
+
+                decision_p_e is the concatenation of all tree decision_p's
+
+            leaf_p_e: terminal node probability distributions for all ensemble. The
+                indexing is the same as that of decision_p_e.
+            """
+        assert(len(w4_e) == len(w_d_e))
+        assert(len(w4_e) == len(w_l_e))
+
+        decision_p_e = []
+        leaf_p_e = []
+        count = 0
+        for w4, w_d, w_l in zip(w4_e, w_d_e, w_l_e):
+            #with tf.name_scope(get_tree_name(count) + '/' + 'FullyConnected/'):
+            with tf.name_scope('FullyConnected-{:d}/'.format(count)):
+                # n_loops = N_TREES
+                l4 = tf.nn.relu(tf.matmul(upper_layer, w4, name='FC_MatMul'), name='FC_act')
+                l4 = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
+            with tf.name_scope(get_tree_name(count)+'/'):
+                # d_n (x) = \sigma ( f_n (x) )
+                decision_p = tf.nn.sigmoid(tf.matmul(l4, w_d), name='DecisionNode_{:d}'.format(count))
+                leaf_p = tf.nn.softmax(w_l, name='LeafNode_{:d}'.format(count))
+
+                decision_p_e.append(decision_p)
+                leaf_p_e.append(leaf_p)
+
+                count += 1
+
+        return decision_p_e, leaf_p_e
+
+    ##################################################
+    # Input Output shape and placeholder
+    ##################################################
+    # Input X, output Y
+    X = tf.placeholder("float", shape=input_shape, name='X')
+    Y = tf.placeholder("float", shape=output_shape, name='Y')
+
+    ##################################################
+    # Initialize network weights
+    ##################################################
+    p_keep_conv = tf.placeholder("float", name='p_keep_conv')
+    p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
+
+    with tf.name_scope("CNN"):
+        with tf.name_scope("CNN/layer-1/"):
+            # [filter_height, filter_width, in_channels, out_channels]
+            w1 = init_weights([3, 3, 1, 32], name='w1')
+        with tf.name_scope("CNN/layer-2/"):
+            w2 = init_weights([3, 3, 32, 64], name='w2')
+        with tf.name_scope("CNN/layer-3/"):
+            w3 = init_weights([3, 3, 64, 128], name='w3')
+
+    final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
+    # final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[10] * 10)
+
+    w4_ensemble = []
+    w_d_ensemble = []
+    w_l_ensemble = []
+    for i in range(N_TREE):
+        #with tf.name_scope(get_tree_name(i) + '/' + 'FullyConnected/'):
+        with tf.name_scope('FullyConnected-{:d}/'.format(i)):
+            # FC layer input dim = output dim of upper network
+            # 128 channels, 4 = round(28 / 2 / 2 / 2) (max-pooling)
+            w4_ensemble.append(init_weights([final_layer_size, FC_output_dim],
+                                            name='w4_ensemble_{:d}'.format(i)))
+        with tf.name_scope(get_tree_name(i) + '/'):
+            w_d_ensemble.append(init_prob_weights([FC_output_dim, N_LEAF], -1, 1,
+                                                  name='w_d_ensemble_{:d}'.format(i)))
+        w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
+                                              name='w_l_ensemble_{:d}'.format(i)))
+
+    ##################################################
+    # Define a fully differentiable deep-ndf
+    ##################################################
+    # With the probability decision_p, route a sample to the right branch
+
+    decision_p_e, leaf_p_e = model(final_layer_of_upper_model, w4_ensemble, w_d_ensemble,
+                                   w_l_ensemble, p_keep_hidden)
+
+    #with tf.name_scope('vec_decision_probs'):
+    flat_decision_p_e = []
     count = 0
-    for w4, w_d, w_l in zip(w4_e, w_d_e, w_l_e):
-        #with tf.name_scope(get_tree_name(count) + '/' + 'FullyConnected/'):
-        with tf.name_scope('FullyConnected-{:d}/'.format(count)):
-            # n_loops = N_TREES
-            l4 = tf.nn.relu(tf.matmul(l3, w4, name='FC_MatMul'), name='FC_act')
-            l4 = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
-        with tf.name_scope(get_tree_name(count)+'/'):
-                    
-            # d_n (x) = \sigma ( f_n (x) )
-            decision_p = tf.nn.sigmoid(tf.matmul(l4, w_d), name='DecisionNode_{:d}'.format(count))
-            leaf_p = tf.nn.softmax(w_l, name='LeafNode_{:d}'.format(count))
+    # iterate over each tree
+    for decision_p in decision_p_e:
+        with tf.name_scope(get_tree_name(count)):
+            # Compute the complement of d, which is 1 - d
+                # where d is the sigmoid of fully connected output
+            decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p, name='decision_p_comp')
 
-            decision_p_e.append(decision_p)
-            leaf_p_e.append(leaf_p)
+            # Concatenate both d, 1-d
+            decision_p_pack = tf.stack([decision_p, decision_p_comp], name='decision_p_pack')
+
+            # Flatten/vectorize the decision probabilities for efficient indexing
+            flat_decision_p = tf.reshape(decision_p_pack, [-1], name='flat_decision_p')
+            flat_decision_p_e.append(flat_decision_p)
 
             count += 1
 
-    return decision_p_e, leaf_p_e
+    # 0 index of each data instance in a mini-batch
+    batch_0_indices = \
+        tf.tile(tf.expand_dims(tf.range(0, N_BATCH * N_LEAF, N_LEAF), 1),
+                [1, N_LEAF], name='batch_0_indices')
 
-##################################################
-# Load dataset
-##################################################
-mnist = input_data.read_data_sets("Data/MNIST/", one_hot=True)
-trX, trY = mnist.train.images, mnist.train.labels
-teX, teY = mnist.test.images, mnist.test.labels
-trX = trX.reshape(-1, 28, 28, 1)
-teX = teX.reshape(-1, 28, 28, 1)
+    ###############################################################################
+    # The routing probability (of each leaf node) computation
+    #
+    # We will create a routing probability matrix \mu. First, we will initialize
+    # \mu using the root node d, 1-d. To efficiently implement this routing, we
+    # will create a giant vector (matrix) that contains all d and 1-d from all
+    # decision nodes. The matrix version of that is decision_p_pack and vectorized
+    # version is flat_decision_p.
+    #
+    # The suffix `_e` indicates an ensemble. i.e. concatenation of all responsens
+    # from trees.
+    #
+    # For depth = 2 tree, the routing probability for each leaf node can be easily
+    # compute by multiplying the following vectors elementwise.
+    # \mu =       [d_0,   d_0,   d_0,   d_0, 1-d_0, 1-d_0, 1-d_0, 1-d_0]
+    # \mu = \mu * [d_1,   d_1, 1-d_1, 1-d_1,   d_2,   d_2, 1-d_2, 1-d_2]
+    # \mu = \mu * [d_3, 1-d_3,   d_4, 1-d_4,   d_5, 1-d_5,   d_6, 1-d_6]
+    #
+    # Tree indexing
+    #      0
+    #    1   2
+    #   3 4 5 6
+    ##############################################################################
+    with tf.name_scope('route_prob'):
+        tree_scopes = []
 
-# Input X, output Y
-X = tf.placeholder("float", [N_BATCH, 28, 28, 1], 'X')
-Y = tf.placeholder("float", [N_BATCH, N_LABEL], 'Y')
+        in_repeat = N_LEAF // 2
+        out_repeat = N_BATCH
 
-##################################################
-# Initialize network weights
-##################################################
-with tf.name_scope("CNN"):
-    with tf.name_scope("CNN/layer-1/"):
-        w = init_weights([3, 3, 1, 32], name='w1')
-    with tf.name_scope("CNN/layer-2/"):
-        w2 = init_weights([3, 3, 32, 64], name='w2')
-    with tf.name_scope("CNN/layer-3/"):
-        w3 = init_weights([3, 3, 64, 128], name='w3')
-
-w4_ensemble = []
-w_d_ensemble = []
-w_l_ensemble = []
-for i in range(N_TREE):
-    #with tf.name_scope(get_tree_name(i) + '/' + 'FullyConnected/'):
-    with tf.name_scope('FullyConnected-{:d}/'.format(i)):
-        w4_ensemble.append(init_weights([128 * 4 * 4, 625],
-                           name='w4_ensemble_{:d}'.format(i)))
-    with tf.name_scope(get_tree_name(i) + '/'):
-        w_d_ensemble.append(init_prob_weights([625, N_LEAF], -1, 1,
-                                        name='w_d_ensemble_{:d}'.format(i)))
-        w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
-                                        name='w_l_ensemble_{:d}'.format(i)))
-
-p_keep_conv = tf.placeholder("float", name='p_keep_conv')
-p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
-
-##################################################
-# Define a fully differentiable deep-ndf
-##################################################
-#with tf.name_scope('dNDF_model'):
-# With the probability decision_p, route a sample to the right branch
-[variable_summaries(w_l__, name='leaf_weights') for w_l__ in w_l_ensemble]
-decision_p_e, leaf_p_e = model(X, w, w2, w3, w4_ensemble, w_d_ensemble,
-                               w_l_ensemble, p_keep_conv, p_keep_hidden)
-[variable_summaries(leaf_p__, name='leaf_prob') for leaf_p__ in leaf_p_e]
-
-#with tf.name_scope('vec_decision_probs'):
-flat_decision_p_e = []
-count = 0
-# iterate over each tree
-for decision_p in decision_p_e:
-    with tf.name_scope(get_tree_name(count)):
-        # Compute the complement of d, which is 1 - d
-        # where d is the sigmoid of fully connected output
-        decision_p_comp = tf.subtract(tf.ones_like(decision_p), decision_p, name='decision_p_comp')
-
-        # Concatenate both d, 1-d
-        decision_p_pack = tf.stack([decision_p, decision_p_comp], name='decision_p_pack')
-
-        # Flatten/vectorize the decision probabilities for efficient indexing
-        flat_decision_p = tf.reshape(decision_p_pack, [-1], name='flat_decision_p')
-        flat_decision_p_e.append(flat_decision_p)
-
-        count += 1
-
-# 0 index of each data instance in a mini-batch
-batch_0_indices = \
-    tf.tile(tf.expand_dims(tf.range(0, N_BATCH * N_LEAF, N_LEAF), 1),
-            [1, N_LEAF], name='batch_0_indices')
-
-###############################################################################
-# The routing probability (of each leaf node) computation
-#
-# We will create a routing probability matrix \mu. First, we will initialize
-# \mu using the root node d, 1-d. To efficiently implement this routing, we
-# will create a giant vector (matrix) that contains all d and 1-d from all
-# decision nodes. The matrix version of that is decision_p_pack and vectorized
-# version is flat_decision_p.
-#
-# The suffix `_e` indicates an ensemble. i.e. concatenation of all responsens
-# from trees.
-#
-# For depth = 2 tree, the routing probability for each leaf node can be easily
-# compute by multiplying the following vectors elementwise.
-# \mu =       [d_0,   d_0,   d_0,   d_0, 1-d_0, 1-d_0, 1-d_0, 1-d_0]
-# \mu = \mu * [d_1,   d_1, 1-d_1, 1-d_1,   d_2,   d_2, 1-d_2, 1-d_2]
-# \mu = \mu * [d_3, 1-d_3,   d_4, 1-d_4,   d_5, 1-d_5,   d_6, 1-d_6]
-#
-# Tree indexing
-#      0
-#    1   2
-#   3 4 5 6
-##############################################################################
-with tf.name_scope('route_prob'):
-    tree_scopes = []
-
-    in_repeat = N_LEAF // 2
-    out_repeat = N_BATCH
-
-    # Let N_BATCH * N_LEAF be N_D. flat_decision_p[N_D] will return 1-d of the
-    # first root node in the first tree.
-    batch_complement_indices = \
-        np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
-                 * out_repeat).reshape(N_BATCH, N_LEAF)
-
-    # First define the routing probabilities d for root nodes
-    mu_e = []
-
-    # iterate over each tree
-    for i, flat_decision_p in enumerate(flat_decision_p_e):
-        with tf.name_scope(get_tree_name(i)) as scope:
-            tree_scopes.append(scope)
-            mu = tf.gather(flat_decision_p,
-                           tf.add(batch_0_indices, batch_complement_indices), name='mu_{:d}'.format(i))
-            mu_e.append(mu)
-
-    # from the second layer to the last layer, we make the decision nodes
-    for d in range(1, DEPTH + 1):
-        indices = tf.range(2 ** d, 2 ** (d + 1)) - 1
-        tile_indices = tf.reshape(tf.tile(tf.expand_dims(indices, 1),
-                                          [1, 2 ** (DEPTH - d + 1)]), [1, -1])
-        batch_indices = tf.add(batch_0_indices, tf.tile(tile_indices, [N_BATCH, 1]))
-
-        in_repeat = in_repeat // 2
-        out_repeat = out_repeat * 2
-
-        # Again define the indices that picks d and 1-d for the node
+        # Let N_BATCH * N_LEAF be N_D. flat_decision_p[N_D] will return 1-d of the
+        # first root node in the first tree.
         batch_complement_indices = \
             np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
                      * out_repeat).reshape(N_BATCH, N_LEAF)
 
-        mu_e_update = []
+        # First define the routing probabilities d for root nodes
+        mu_e = []
+
+        # iterate over each tree
+        for i, flat_decision_p in enumerate(flat_decision_p_e):
+            with tf.name_scope(get_tree_name(i)) as scope:
+                tree_scopes.append(scope)
+                mu = tf.gather(flat_decision_p,
+                               tf.add(batch_0_indices, batch_complement_indices), name='mu_{:d}'.format(i))
+                mu_e.append(mu)
+
+        # from the second layer to the last layer, we make the decision nodes
+        for d in range(1, DEPTH + 1):
+            indices = tf.range(2 ** d, 2 ** (d + 1)) - 1
+            tile_indices = tf.reshape(tf.tile(tf.expand_dims(indices, 1),
+                                              [1, 2 ** (DEPTH - d + 1)]), [1, -1])
+            batch_indices = tf.add(batch_0_indices, tf.tile(tile_indices, [N_BATCH, 1]))
+
+            in_repeat = in_repeat // 2
+            out_repeat = out_repeat * 2
+
+            # Again define the indices that picks d and 1-d for the node
+            batch_complement_indices = \
+                np.array([[0] * in_repeat, [N_BATCH * N_LEAF] * in_repeat]
+                         * out_repeat).reshape(N_BATCH, N_LEAF)
+
+            mu_e_update = []
+            count = 0
+            for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
+                with tf.name_scope(tree_scopes[count]):
+                    mu = tf.multiply(mu, tf.gather(flat_decision_p,
+                                              tf.add(batch_indices, batch_complement_indices)), name='mu_{:d}_new'.format(count))
+                    mu_e_update.append(mu)
+                    count += 1
+
+            mu_e = mu_e_update
+
+    ##################################################
+    # Define p(y|x)
+    ##################################################
+    with tf.name_scope('P_y_cond_x'):
+        py_x_e = []
         count = 0
-        for mu, flat_decision_p in zip(mu_e, flat_decision_p_e):
-            with tf.name_scope(tree_scopes[count]):
-                mu = tf.multiply(mu, tf.gather(flat_decision_p,
-                                          tf.add(batch_indices, batch_complement_indices)), name='mu_{:d}_new'.format(count))
-                mu_e_update.append(mu)
+        for mu, leaf_p in zip(mu_e, leaf_p_e):
+            with tf.name_scope(get_tree_name(count)):
+                # average all the leaf p
+                py_x_tree = tf.reduce_mean(
+                    tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
+                                tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])),
+                    1,
+                    name='py_x_tree_{:d}'.format(count))
+                py_x_e.append(py_x_tree)
                 count += 1
 
-        mu_e = mu_e_update
+        py_x_e = tf.stack(py_x_e, name='py_x_e')
+        py_x = tf.reduce_mean(py_x_e, 0, name='py_x')
 
-##################################################
-# Define p(y|x)
-##################################################
-with tf.name_scope('P_y_cond_x'):
-    py_x_e = []
-    count = 0
-    for mu, leaf_p in zip(mu_e, leaf_p_e):
-        with tf.name_scope(get_tree_name(count)):
-            # average all the leaf p
-            py_x_tree = tf.reduce_mean(
-                tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
-                            tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])),
-                1,
-                name='py_x_tree_{:d}'.format(count))
-            py_x_e.append(py_x_tree)
-            count += 1
+    ##################################################
+    # Define cost and optimization method
+    ##################################################
 
-    [variable_summaries(py_x_e_elem, name='py_x_ensemble') for py_x_e_elem in py_x_e]
-    py_x_e = tf.stack(py_x_e, name='py_x_e')
-    py_x = tf.reduce_mean(py_x_e, 0, name='py_x')
-    # summary
-    variable_summaries(py_x, name='py_x')
+    with tf.name_scope('cost_opt'):
+        # cross entropy loss
+        cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost')
+        tf.summary.scalar('cross_entropy', cost)
+
+        # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
+        train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
+        predict_step = tf.argmax(py_x, 1, name='predict')
+
+    # return
+    return train_step, predict_step, X, Y, p_keep_conv, p_keep_hidden
 
 
+def load_custom_data():
+    from data_vendor import DataFutureTick as Vendor
+    dv = Vendor()
+
+    trX, teX, trY, teY, input_shape_without_batch = dv.get_data()
+
+    # common transform
+    input_reshape_arg = np.hstack([(-1, ),
+                                   input_shape_without_batch]).tolist()
+    input_shape = np.hstack([(N_BATCH, ),
+                             input_shape_without_batch]).tolist()
+
+    output_shape = [N_BATCH, N_LABEL]
+
+    # data reshape
+    trX = trX.reshape(*input_reshape_arg)
+    teX = teX.reshape(*input_reshape_arg)
+
+    return trX, teX, trY, teY, input_shape, output_shape
+
+
+def init_and_run():
+    print("Start init_and_run.")
+
+    # prepare session and do initialization
+    sess = tf.Session(config=gpuconfig)
+
+    # summary writer
+    merged = tf.summary.merge_all()
+    train_writer = tf.summary.FileWriter('ndf_logs', sess.graph)
+
+    sess.run(tf.initialize_all_variables())
+
+    # loop run
+    import time
+    t0 = time.time()
+    for i in range(100):
+        # One epoch
+        print("Need to run {:d} times per epoch.".format(len(trX) // N_BATCH))
+        for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
+            # print("start {} - end {}".format(start, end))
+            print('.', end='', flush=True)
+            summary_train, _ = sess.run([merged, train_step], feed_dict={X_in          : trX[start:end],
+                                                                         Y_in          : trY[start:end],
+                                                                         p_keep_conv   : 0.8,
+                                                                         p_keep_hidden : 0.5})
+            train_writer.add_summary(summary_train, i)
+            train_writer.flush()
+
+        # Result on the test set
+        results = []
+        for start, end in zip(range(0, len(teX), N_BATCH), range(N_BATCH, len(teX), N_BATCH)):
+            y_pred = sess.run(predict_step, feed_dict={X_in          : teX[start:end],
+                                                       p_keep_conv   : 1.0,
+                                                       p_keep_hidden : 1.0})
+            results.extend(
+                np.argmax(teY[start:end], axis=1) == y_pred
+                )
+            accu_test = np.mean(results)
+        print('\nEpoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
+        print(time.time() - t0)
+
+
+if __name__ == "__main__":
+    trX, teX, trY, teY, input_shape, output_shape = load_custom_data()
+    train_step, predict_step, X_in, Y_in, p_keep_conv, p_keep_hidden = define_ndf()
+    init_and_run()
+    """
 def get_ladder(tick=1.0):
     mid = 0.0
     n_levels = N_LABEL
@@ -502,36 +621,4 @@ with tf.name_scope('cost_opt'):
     # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
     train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
     predict = tf.argmax(py_x, 1, name='predict')
-
-sess = tf.Session(config=gpuconfig)
-
-# summary writer
-merged = tf.summary.merge_all()
-train_writer = tf.summary.FileWriter('ndf_logs', sess.graph)
-
-sess.run(tf.initialize_all_variables())
-
-import time
-t0 = time.time()
-for i in range(100):
-    # One epoch
-    for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
-        print("start {} - end {}".format(start, end))
-        summary_train, _ = sess.run([merged, train_step], feed_dict={X: trX[start:end], Y: trY[start:end],
-                                        p_keep_conv: 0.8, p_keep_hidden: 0.5})
-        train_writer.add_summary(summary_train, i)
-        train_writer.flush()
-
-    # Result on the test set
-    results = []
-    for start, end in zip(range(0, len(teX), N_BATCH), range(N_BATCH, len(teX), N_BATCH)):
-        y_pred = sess.run(predict, feed_dict={X             : teX[start:end],
-                                              p_keep_conv   : 1.0,
-                                              p_keep_hidden : 1.0})
-        results.extend(
-            np.argmax(teY[start:end], axis=1) == y_pred
-            )
-        accu_test = np.mean(results)
-    print('Epoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
-    print(time.time() - t0)
-
+    """
