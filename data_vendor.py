@@ -9,6 +9,8 @@ class DataVendor:
         self.x = None
         self.y = None
         self.input_shape_without_batch = (0, )
+        # for regression, n_classes = 1
+        self.n_classes = 0
 
         self.prepare_data()
 
@@ -20,7 +22,7 @@ class DataVendor:
                                                             test_size=test_size,
                                                             shuffle=shuffle, random_state=random_state)
 
-        return x_train, x_test, y_train, y_test, self.input_shape_without_batch
+        return x_train, x_test, y_train, y_test, self.input_shape_without_batch, self.n_classes
 
 
 class DataWineQuality(DataVendor):
@@ -39,6 +41,7 @@ class DataWineQuality(DataVendor):
         self.y = Y
         n_cols = X.shape[1]
         self.input_shape_without_batch = (n_cols, )
+        self.n_classes = 10
 
 
 class DataMNIST(DataVendor):
@@ -49,14 +52,17 @@ class DataMNIST(DataVendor):
         trX, trY = mnist.train.images, mnist.train.labels
         teX, teY = mnist.test.images, mnist.test.labels
 
-        return trX, teX, trY, teY, self.input_shape_without_batch
+        return trX, teX, trY, teY, self.input_shape_without_batch, self.n_classes
 
     def prepare_data(self):
         # If use cnn: Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
-        self.input_shape_without_batch = (28, 28, 1)
+        # self.input_shape_without_batch = (28, 28, 1)
 
         # If use dnn
-        # self.input_shape_without_batch = (28 * 28, )
+        self.input_shape_without_batch = (28 * 28, )
+
+        n_labels = 10
+        self.n_classes = n_labels
 
 
 class DataFutureTick(DataVendor):
@@ -67,3 +73,5 @@ class DataFutureTick(DataVendor):
         n_cols = self.x.shape[1]
 
         self.input_shape_without_batch = (n_cols, )
+        n_ticks = 16
+        self.n_classes = n_ticks

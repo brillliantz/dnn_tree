@@ -211,7 +211,7 @@ import sklearn
 
 DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
-N_LABEL = 10                # Number of classes
+# N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
 N_BATCH = 77               # Number of data points per mini-batch
 
@@ -231,7 +231,7 @@ def variable_summaries(var, name=''):
         tf.summary.histogram('histogram', var)
 
 
-def define_ndf():
+def define_ndf(upper_model_choice='dnn', regression=False):
     def init_weights(shape, name=None):
         return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
 
@@ -360,8 +360,13 @@ def define_ndf():
         with tf.name_scope("CNN/layer-3/"):
             w3 = init_weights([3, 3, 64, 128], name='w3')
 
-    final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
-    # final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[10] * 10)
+    if upper_model_choice == 'cnn':
+        final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
+    elif upper_model_choice == 'dnn':
+        final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[50] * 3)
+    else:
+        final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
+
 
     w4_ensemble = []
     w_d_ensemble = []
@@ -376,7 +381,7 @@ def define_ndf():
         with tf.name_scope(get_tree_name(i) + '/'):
             w_d_ensemble.append(init_prob_weights([FC_output_dim, N_LEAF], -1, 1,
                                                   name='w_d_ensemble_{:d}'.format(i)))
-        w_l_ensemble.append(init_prob_weights([N_LEAF, N_LABEL], -2, 2,
+        w_l_ensemble.append(init_prob_weights([N_LEAF, n_class], -2, 2,
                                               name='w_l_ensemble_{:d}'.format(i)))
 
     ##################################################
@@ -493,7 +498,7 @@ def define_ndf():
             with tf.name_scope(get_tree_name(count)):
                 # average all the leaf p
                 py_x_tree = tf.reduce_mean(
-                    tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, N_LABEL]),
+                    tf.multiply(tf.tile(tf.expand_dims(mu, 2), [1, 1, n_class]),
                                 tf.tile(tf.expand_dims(leaf_p, 0), [N_BATCH, 1, 1])),
                     1,
                     name='py_x_tree_{:d}'.format(count))
@@ -503,13 +508,41 @@ def define_ndf():
         py_x_e = tf.stack(py_x_e, name='py_x_e')
         py_x = tf.reduce_mean(py_x_e, 0, name='py_x')
 
+    def get_ladder(tick=1.0):
+        mid = 0.0
+        n_levels = n_class
+        if n_levels % 2 == 0:
+            lower = mid - tick * (n_levels / 2)
+            upper = mid + tick * (n_levels / 2)
+        else:
+            lower = mid - tick * (n_levels // 2 + 0.5)
+            upper = mid + tick * (n_levels // 2 + 0.5)
+
+        return tf.linspace(lower, upper, n_levels)
+
     ##################################################
     # Define cost and optimization method
     ##################################################
 
     with tf.name_scope('cost_opt'):
-        # cross entropy loss
-        cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost')
+        if regression:
+            with tf.name_scope("continuous_output"):
+                ladder = get_ladder()
+                ladder_batch = tf.tile(tf.expand_dims(ladder, 0), [N_BATCH, 1])
+                tmp = tf.multiply(py_x, ladder_batch)
+                print(tmp.get_shape())
+                y_pred_node = tf.reduce_sum(tmp, axis=1, name='Y_pred')
+                print(y_pred_node.get_shape())
+                assert(0)
+
+            cost = tf.reduce_sum(
+                tf.losses.mean_squared_error(Y, y_pred_node),
+                name="MSE"
+            )
+        else:
+            # cross entropy loss
+            cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost') # brz
+
         tf.summary.scalar('cross_entropy', cost)
 
         # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
@@ -521,10 +554,12 @@ def define_ndf():
 
 
 def load_custom_data():
-    from data_vendor import DataFutureTick as Vendor
+    # from data_vendor import DataFutureTick as Vendor
+    from data_vendor import DataMNIST as Vendor
     dv = Vendor()
+    task_regression = 0
 
-    trX, teX, trY, teY, input_shape_without_batch = dv.get_data()
+    trX, teX, trY, teY, input_shape_without_batch, n_classes = dv.get_data()
 
     # common transform
     input_reshape_arg = np.hstack([(-1, ),
@@ -532,13 +567,13 @@ def load_custom_data():
     input_shape = np.hstack([(N_BATCH, ),
                              input_shape_without_batch]).tolist()
 
-    output_shape = [N_BATCH, N_LABEL]
+    output_shape = [N_BATCH, n_classes]
 
     # data reshape
     trX = trX.reshape(*input_reshape_arg)
     teX = teX.reshape(*input_reshape_arg)
 
-    return trX, teX, trY, teY, input_shape, output_shape
+    return trX, teX, trY, teY, n_classes, input_shape, output_shape, task_regression
 
 
 def init_and_run():
@@ -584,41 +619,9 @@ def init_and_run():
 
 
 if __name__ == "__main__":
-    trX, teX, trY, teY, input_shape, output_shape = load_custom_data()
-    train_step, predict_step, X_in, Y_in, p_keep_conv, p_keep_hidden = define_ndf()
+    trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
+    train_step, predict_step, X_in, Y_in, p_keep_conv, p_keep_hidden = \
+        define_ndf(upper_model_choice='dnn', regression=is_regression)
     init_and_run()
     """
-def get_ladder(tick=1.0):
-    mid = 0.0
-    n_levels = N_LABEL
-    if n_levels % 2 == 0:
-        lower = mid - tick * (n_levels / 2)
-        upper = mid + tick * (n_levels / 2)
-    else:
-        lower = mid - tick * (n_levels // 2 + 0.5)
-        upper = mid + tick * (n_levels // 2 + 0.5)
-
-    return tf.linspace(lower, upper, n_levels)
-
-with tf.name_scope("continuous_output"):
-    ladder = get_ladder()
-    ladder_batch = tf.tile(tf.expand_dims(ladder, 0), [N_BATCH, 1])
-    y_pred_node = tf.reduce_sum(tf.multiply(py_x, ladder_batch), axis=1, name='Y_pred')
-
-##################################################
-# Define cost and optimization method
-##################################################
-
-with tf.name_scope('cost_opt'):
-    # cross entropy loss
-    cost = tf.reduce_sum(
-        tf.losses.mean_squared_error(Y, y_pred_node),
-        name="MSE"
-    )
-    # cost = tf.reduce_mean(-tf.multiply(tf.log(py_x), Y), name='cost') # brz
-    tf.summary.scalar('cross_entropy', cost)
-
-    # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
-    train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
-    predict = tf.argmax(py_x, 1, name='predict')
     """
