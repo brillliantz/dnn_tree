@@ -213,7 +213,7 @@ DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 # N_LABEL = 10                # Number of classes
 N_TREE  = 2                 # Number of trees (ensemble)
-N_BATCH = 77               # Number of data points per mini-batch
+N_BATCH = 4000               # Number of data points per mini-batch
 
 FC_output_dim = 625
 
@@ -229,6 +229,19 @@ def variable_summaries(var, name=''):
         tf.summary.scalar('max', tf.reduce_max(var))
         tf.summary.scalar('min', tf.reduce_min(var))
         tf.summary.histogram('histogram', var)
+
+
+def calc_rsq_tf(y, yhat):
+    total_error = tf.reduce_sum(tf.square(tf.sub(y, tf.reduce_mean(y))), name='total_error')
+    unexplained_error = tf.reduce_sum(tf.square(tf.sub(y, yhat)), name='unexplained_error')
+    r_squared = tf.sub(1, tf.div(unexplained_error, total_error), name='Rsquared')
+    return r_squared
+
+
+def calc_rsq(y, yhat):
+    # ret = 1 - (y-yhat).var() / y.var()
+    ret = 1 - ((y - yhat) ** 2).mean() / y.var()
+    return ret
 
 
 def define_ndf(upper_model_choice='dnn', regression=False):
@@ -530,10 +543,7 @@ def define_ndf(upper_model_choice='dnn', regression=False):
                 ladder = get_ladder()
                 ladder_batch = tf.tile(tf.expand_dims(ladder, 0), [N_BATCH, 1])
                 tmp = tf.multiply(py_x, ladder_batch)
-                print(tmp.get_shape())
                 y_pred_node = tf.reduce_sum(tmp, axis=1, name='Y_pred')
-                print(y_pred_node.get_shape())
-                assert(0)
 
             cost = tf.reduce_sum(
                 tf.losses.mean_squared_error(Y, y_pred_node),
@@ -547,17 +557,21 @@ def define_ndf(upper_model_choice='dnn', regression=False):
 
         # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
         train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
-        predict_step = tf.argmax(py_x, 1, name='predict')
+
+        if is_regression:
+            predict_step = y_pred_node
+        else:
+            predict_step = tf.argmax(py_x, 1, name='predict')
 
     # return
     return train_step, predict_step, X, Y, p_keep_conv, p_keep_hidden
 
 
 def load_custom_data():
-    # from data_vendor import DataFutureTick as Vendor
-    from data_vendor import DataMNIST as Vendor
+    from data_vendor import DataFutureTick as Vendor
+    # from data_vendor import DataMNIST as Vendor
     dv = Vendor()
-    task_regression = 0
+    task_regression = 1
 
     trX, teX, trY, teY, input_shape_without_batch, n_classes = dv.get_data()
 
@@ -567,7 +581,8 @@ def load_custom_data():
     input_shape = np.hstack([(N_BATCH, ),
                              input_shape_without_batch]).tolist()
 
-    output_shape = [N_BATCH, n_classes]
+    # output_shape = [N_BATCH, n_classes]
+    output_shape = [N_BATCH, ]
 
     # data reshape
     trX = trX.reshape(*input_reshape_arg)
@@ -607,14 +622,25 @@ def init_and_run():
         # Result on the test set
         results = []
         for start, end in zip(range(0, len(teX), N_BATCH), range(N_BATCH, len(teX), N_BATCH)):
-            y_pred = sess.run(predict_step, feed_dict={X_in          : teX[start:end],
-                                                       p_keep_conv   : 1.0,
-                                                       p_keep_hidden : 1.0})
-            results.extend(
-                np.argmax(teY[start:end], axis=1) == y_pred
-                )
+            if is_regression:
+                y_pred = sess.run(predict_step, feed_dict={X_in          : teX[start:end],
+                                                           p_keep_conv   : 1.0,
+                                                           p_keep_hidden : 1.0})
+                results.extend(y_pred)
+            else:
+                y_pred = sess.run(predict_step, feed_dict={X_in          : teX[start:end],
+                                                           p_keep_conv   : 1.0,
+                                                           p_keep_hidden : 1.0})
+                results.extend(
+                    np.argmax(teY[start:end], axis=1) == y_pred
+                    )
+
+        if is_regression:
+            rsq = calc_rsq(teY[: end], results[: end])
+            print('\nEpoch: %d, Rsquared: %f' % (i + 1, rsq))
+        else:
             accu_test = np.mean(results)
-        print('\nEpoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
+            print('\nEpoch: %d, Test Accuracy: %f' % (i + 1, accu_test))
         print(time.time() - t0)
 
 

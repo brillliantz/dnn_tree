@@ -70,6 +70,12 @@ class DataFutureTick(DataVendor):
         from tick_data_vendor import load_data
         self.x, self.y = load_data()
 
+        if True:
+            n = len(self.x)
+            n_cut = n // 3
+            self.x = self.x[: n_cut]
+            self.y = self.y[: n_cut]
+
         n_cols = self.x.shape[1]
 
         self.input_shape_without_batch = (n_cols, )
