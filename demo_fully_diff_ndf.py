@@ -213,7 +213,7 @@ DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 # N_LABEL = 10                # Number of classes
 N_TREE  = 3                 # Number of trees (ensemble)
-N_BATCH = 10000               # Number of data points per mini-batch
+N_BATCH = 100               # Number of data points per mini-batch
 
 FC_output_dim = 625
 
@@ -305,6 +305,37 @@ def define_ndf(upper_model_choice='dnn', regression=False):
                 l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
                                      strides=[1, 2, 2, 1], padding='SAME', name='l3_')
 
+                #l3c = tf.reshape(l3b, [N_BATCH, -1], name='l3_reshape')
+                #l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
+                l3 = tf.nn.dropout(l3b, p_keep_conv, name='l3')
+                l3 = tf.reshape(l3, [N_BATCH, -1], name='l3_reshape')
+
+        final_layer = l3
+        return final_layer, 4 * 4 * 128
+
+    def upper_model_cnn_1d(X, w1, w2, w3, p_keep_conv):
+        with tf.name_scope("CNN/"):
+            with tf.name_scope('CNN/layer-1/'):
+                # [filter_height, filter_width, in_channels, out_channels]
+                w1 = init_weights([3, 1, 1, 32], name='w1')
+                l1a = tf.nn.relu(tf.nn.conv2d(X, w1, [1, 1, 1, 1], 'SAME'), name='l1a')
+                l1b = tf.nn.max_pool(l1a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l1_')
+                l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
+
+            with tf.name_scope('CNN/layer-2/'):
+                w2 = init_weights([3, 3, 32, 64], name='w2')
+                l2a = tf.nn.relu(tf.nn.conv2d(l1, w2, [1, 1, 1, 1], 'SAME'), name='l2a')
+                l2b = tf.nn.max_pool(l2a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l2_')
+                l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
+
+            with tf.name_scope('CNN/layer-3/'):
+                w3 = init_weights([3, 3, 64, 128], name='w3')
+                l3a = tf.nn.relu(tf.nn.conv2d(l2, w3, [1, 1, 1, 1], 'SAME'), name='l3a')
+                l3b = tf.nn.max_pool(l3a, ksize=[1, 2, 2, 1],
+                                     strides=[1, 2, 2, 1], padding='SAME', name='l3_')
+
                 l3c = tf.reshape(l3b, [N_BATCH, -1], name='l3_reshape')
                 l3 = tf.nn.dropout(l3c, p_keep_conv, name='l3')
 
@@ -374,6 +405,8 @@ def define_ndf(upper_model_choice='dnn', regression=False):
             with tf.name_scope("CNN/layer-3/"):
                 w3 = init_weights([3, 3, 64, 128], name='w3')
         final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
+    elif upper_model_choice == 'cnn_1d':
+        final_layer_of_upper_model, final_layer_size = upper_model_cnn_1d(X, p_keep_conv)
     elif upper_model_choice == 'dnn':
         final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[30, 50, 100])
     else:
@@ -568,10 +601,10 @@ def define_ndf(upper_model_choice='dnn', regression=False):
 
 
 def load_custom_data():
-    from data_vendor import DataFutureTick as Vendor
-    # from data_vendor import DataMNIST as Vendor
+    # from data_vendor import DataFutureTick as Vendor
+    from data_vendor import DataMNIST as Vendor
     dv = Vendor()
-    task_regression = 1
+    task_regression = 0
 
     trX, teX, trY, teY, input_shape_without_batch, n_classes = dv.get_data()
 
@@ -580,8 +613,8 @@ def load_custom_data():
     input_shape = np.hstack([(N_BATCH, ),
                              input_shape_without_batch]).tolist()
 
-    # output_shape = [N_BATCH, n_classes]
-    output_shape = [N_BATCH, ]
+    output_shape = [N_BATCH, n_classes]
+    # output_shape = [N_BATCH, ]
 
     # data reshape
     trX = trX.reshape(*input_reshape_arg)
@@ -646,7 +679,7 @@ def init_and_run():
 if __name__ == "__main__":
     trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
     train_step, predict_step, X_in, Y_in, p_keep_conv, p_keep_hidden = \
-        define_ndf(upper_model_choice='dnn', regression=is_regression)
+        define_ndf(upper_model_choice='cnn', regression=is_regression)
     init_and_run()
     """
     """

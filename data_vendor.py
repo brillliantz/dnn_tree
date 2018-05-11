@@ -56,10 +56,10 @@ class DataMNIST(DataVendor):
 
     def prepare_data(self):
         # If use cnn: Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
-        # self.input_shape_without_batch = (28, 28, 1)
+        self.input_shape_without_batch = (28, 28, 1)
 
         # If use dnn
-        self.input_shape_without_batch = (28 * 28, )
+        # self.input_shape_without_batch = (28 * 28, )
 
         n_labels = 10
         self.n_classes = n_labels
