@@ -70,7 +70,7 @@ class DataFutureTick(DataVendor):
         from tick_data_vendor import load_data
         self.x, self.y = load_data()
 
-        if True:
+        if False:
             n = len(self.x)
             n_cut = n // 3
             self.x = self.x[: n_cut]

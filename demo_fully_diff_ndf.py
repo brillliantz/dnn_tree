@@ -212,8 +212,8 @@ import sklearn
 DEPTH   = 3                 # Depth of a tree
 N_LEAF  = 2 ** (DEPTH + 1)  # Number of leaf node
 # N_LABEL = 10                # Number of classes
-N_TREE  = 2                 # Number of trees (ensemble)
-N_BATCH = 4000               # Number of data points per mini-batch
+N_TREE  = 3                 # Number of trees (ensemble)
+N_BATCH = 10000               # Number of data points per mini-batch
 
 FC_output_dim = 625
 
@@ -364,19 +364,18 @@ def define_ndf(upper_model_choice='dnn', regression=False):
     p_keep_conv = tf.placeholder("float", name='p_keep_conv')
     p_keep_hidden = tf.placeholder("float", name='p_keep_hidden')
 
-    with tf.name_scope("CNN"):
-        with tf.name_scope("CNN/layer-1/"):
-            # [filter_height, filter_width, in_channels, out_channels]
-            w1 = init_weights([3, 3, 1, 32], name='w1')
-        with tf.name_scope("CNN/layer-2/"):
-            w2 = init_weights([3, 3, 32, 64], name='w2')
-        with tf.name_scope("CNN/layer-3/"):
-            w3 = init_weights([3, 3, 64, 128], name='w3')
-
     if upper_model_choice == 'cnn':
+        with tf.name_scope("CNN"):
+            with tf.name_scope("CNN/layer-1/"):
+                # [filter_height, filter_width, in_channels, out_channels]
+                w1 = init_weights([3, 3, 1, 32], name='w1')
+            with tf.name_scope("CNN/layer-2/"):
+                w2 = init_weights([3, 3, 32, 64], name='w2')
+            with tf.name_scope("CNN/layer-3/"):
+                w3 = init_weights([3, 3, 64, 128], name='w3')
         final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
     elif upper_model_choice == 'dnn':
-        final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[50] * 3)
+        final_layer_of_upper_model, final_layer_size = upper_model_dnn(X, input_shape[1], layer_sizes=[30, 50, 100])
     else:
         final_layer_of_upper_model, final_layer_size = upper_model_cnn(X, w1, w2, w3, p_keep_conv)
 
@@ -556,7 +555,8 @@ def define_ndf(upper_model_choice='dnn', regression=False):
         tf.summary.scalar('cross_entropy', cost)
 
         # cost = tf.reduce_mean(tf.nn.cross_entropy_with_logits(py_x, Y))
-        train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
+        # train_step = tf.train.RMSPropOptimizer(0.001, 0.9).minimize(cost)
+        train_step = tf.train.AdamOptimizer().minimize(cost)
 
         if is_regression:
             predict_step = y_pred_node
@@ -575,7 +575,6 @@ def load_custom_data():
 
     trX, teX, trY, teY, input_shape_without_batch, n_classes = dv.get_data()
 
-    # common transform
     input_reshape_arg = np.hstack([(-1, ),
                                    input_shape_without_batch]).tolist()
     input_shape = np.hstack([(N_BATCH, ),
@@ -604,14 +603,14 @@ def init_and_run():
     sess.run(tf.initialize_all_variables())
 
     # loop run
+    from tqdm import tqdm
     import time
     t0 = time.time()
     for i in range(100):
         # One epoch
         print("Need to run {:d} times per epoch.".format(len(trX) // N_BATCH))
-        for start, end in zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH)):
+        for start, end in tqdm(zip(range(0, len(trX), N_BATCH), range(N_BATCH, len(trX), N_BATCH))):
             # print("start {} - end {}".format(start, end))
-            print('.', end='', flush=True)
             summary_train, _ = sess.run([merged, train_step], feed_dict={X_in          : trX[start:end],
                                                                          Y_in          : trY[start:end],
                                                                          p_keep_conv   : 0.8,
