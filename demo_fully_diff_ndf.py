@@ -393,8 +393,8 @@ def define_ndf(upper_model_choice='dnn', regression=False):
         with tf.name_scope(get_tree_name(i) + '/'):
             w_d_ensemble.append(init_prob_weights([FC_output_dim, N_LEAF], -1, 1,
                                                   name='w_d_ensemble_{:d}'.format(i)))
-        w_l_ensemble.append(init_prob_weights([N_LEAF, n_class], -2, 2,
-                                              name='w_l_ensemble_{:d}'.format(i)))
+            w_l_ensemble.append(init_prob_weights([N_LEAF, n_class], -2, 2,
+                                                  name='w_l_ensemble_{:d}'.format(i)))
 
     ##################################################
     # Define a fully differentiable deep-ndf
