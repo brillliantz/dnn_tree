@@ -7,7 +7,8 @@ from tqdm import tqdm
 import time
 import os
 
-SAVE_DIR = 'simple_cnn_model'
+# SAVE_DIR = 'simple_cnn_model_1d'
+SAVE_DIR = 'simple_cnn_model_2d'
 
 
 def calc_rsq(y, yhat):
@@ -45,7 +46,7 @@ def cnn_1d(input_, n_channel, p_keep_conv):
                                           name='conv1'),
                              name='l1a')
             l1b = tf.nn.max_pool(l1a,
-                                 ksize=[1, 2, 1, 1], strides=[1, 2, 1, 1], padding='SAME',
+                                 ksize=[1, 2, 1, 1], strides=[1, 2, 1, 1], padding='same',
                                  name='l1_')
             l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
 
@@ -77,7 +78,64 @@ def cnn_1d(input_, n_channel, p_keep_conv):
     return output
 
 
-def full_conn(input_, output_size, p_keep_hidden):
+def cnn_2d(input_, n_channel, p_keep_conv):
+    """
+
+    Parameters
+    ----------
+    input_ : Tensor
+        shape of [batch_size, width (>=1), height (=1), n_channel (n_feature)]
+    n_channel : int
+    p_keep_conv : float Tensor
+
+    Returns
+    -------
+    output : Tensor
+        shape of [batch_size, width (smaller), height (smaller), n_channel (larger)]
+
+    """
+    with tf.name_scope("CNN/"):
+        with tf.name_scope('CNN/layer-1/'):
+            # [filter_height, filter_width, in_channels, out_channels]
+            w1 = init_weights([3, 3, n_channel, 32], name='w1')
+            l1a = tf.nn.relu(tf.nn.conv2d(input_,
+                                          filter=w1, strides=[1, 1, 1, 1], padding='SAME',
+                                          name='conv1'),
+                             name='l1a')
+            l1b = tf.nn.max_pool(l1a,
+                                 ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME',
+                                 name='l1_')
+            l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
+
+        with tf.name_scope('CNN/layer-2/'):
+            w2 = init_weights([3, 3, 32, 64], name='w2')
+            l2a = tf.nn.relu(tf.nn.conv2d(l1,
+                                          filter=w2, strides=[1, 1, 1, 1], padding='SAME',
+                                          name='conv2'),
+                             name='l2a')
+            l2b = tf.nn.max_pool(l2a,
+                                 ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME',
+                                 name='l2_')
+            l2 = tf.nn.dropout(l2b, p_keep_conv, name='l2')
+
+        with tf.name_scope('CNN/layer-3/'):
+            w3 = init_weights([3, 3, 64, 128], name='w3')
+            l3a = tf.nn.relu(tf.nn.conv2d(l2,
+                                          filter=w3, strides=[1, 1, 1, 1], padding='SAME',
+                                          name='conv3'),
+                             name='l3a')
+            l3b = tf.nn.max_pool(l3a,
+                                 ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME',
+                                 name='l3_')
+
+            l3 = tf.nn.dropout(l3b, p_keep_conv, name='l3')
+            #l3c = tf.reshape(l3b, [batch_size, -1], name='l3_reshape')
+
+    output = l3
+    return output
+
+
+def full_conn(input_, output_size, p_keep_hidden, act='relu'):
     """
 
     Parameters
@@ -86,6 +144,8 @@ def full_conn(input_, output_size, p_keep_hidden):
         shape of [batch_size, n]
     output_size
     p_keep_hidden
+    act : str
+        Name of activation function.
 
     Returns
     -------
@@ -96,7 +156,16 @@ def full_conn(input_, output_size, p_keep_hidden):
     input_size = input_.get_shape()[-1].value
     w4 = init_weights([input_size, output_size], name='w4')
 
-    l4 = tf.nn.relu(tf.matmul(input_, w4, name='FC_MatMul'), name='FC_act')
+    matmul_res = tf.matmul(input_, w4, name='FC_MatMul')
+    if act == 'relu':
+        act_func = tf.nn.relu
+    elif act == 'softmax':
+        act_func = tf.nn.softmax
+    elif act == 'sigmoid':
+        act_func = tf.nn.sigmoid
+    else:
+        act_func = tf.nn.relu
+    l4 = act_func(matmul_res, name='FC_act')
 
     l4_drop = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
 
@@ -121,12 +190,13 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     y_pred : Tensor
 
     """
-    conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
     conv_o_reshape = tf.reshape(conv_net_output, shape=[batch_size, -1])
 
-    fc_output = full_conn(conv_o_reshape, output_size=output_size, p_keep_hidden=p_keep_2)
+    fc1_output = full_conn(conv_o_reshape, output_size=512, act='relu', p_keep_hidden=p_keep_2)
+    fc2_output = full_conn(fc1_output, output_size=output_size, act='softmax', p_keep_hidden=p_keep_2)
 
-    y_pred = fc_output
+    y_pred = fc2_output
     return y_pred
 
 
@@ -151,7 +221,8 @@ def build_and_fit():
     y_pred = build_model(X,
                          batch_size=batch_size, n_channel=n_channel, output_size=output_size,
                          p_keep_1=p_keep1, p_keep_2=p_keep2)
-    loss = calc_loss(Y, y_pred)
+    loss = calc_loss(Y, y_pred, kind='cross_entropy')
+    tf.summary.scalar('loss_cross_entropy', loss)
     optimizer = tf.train.AdamOptimizer()
     global_step = tf.Variable(0, name='global_step', trainable=False)
     train_step = opt(loss, optimizer, global_step_var=global_step)
@@ -190,8 +261,8 @@ def build_and_fit():
                   X, Y,
                   trX, trY, batch_size=batch_size, n_epoch=2,
                   fetches=[train_step],
-                  extra_feed_dict={p_keep2 : 0.8,
-                                   p_keep1 : 0.8},
+                  extra_feed_dict={p_keep2 : 1.0,
+                                   p_keep1 : 1.0},
                   merged_summary=None,  # tf.summary.merge_all(),
                   writer_dir='simple_cnn_model',
                   global_step_tensor=global_step,
@@ -200,7 +271,7 @@ def build_and_fit():
                   )
 
 
-def calc_loss(y, yhat, kind='mse'):
+def calc_loss(y, yhat, kind='cross_entropy'):
     if kind == 'mse':
         loss = tf.reduce_sum(
             tf.losses.mean_squared_error(y, yhat),
