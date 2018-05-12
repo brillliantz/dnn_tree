@@ -7,8 +7,10 @@ from tqdm import tqdm
 import time
 import os
 
-# SAVE_DIR = 'simple_cnn_model_1d'
-SAVE_DIR = 'simple_cnn_model_2d'
+tf.logging.set_verbosity(tf.logging.INFO)
+
+SAVE_DIR = 'simple_cnn_model_1d'
+# SAVE_DIR = 'simple_cnn_model_2d'
 
 
 def calc_rsq(y, yhat):
@@ -46,7 +48,7 @@ def cnn_1d(input_, n_channel, p_keep_conv):
                                           name='conv1'),
                              name='l1a')
             l1b = tf.nn.max_pool(l1a,
-                                 ksize=[1, 2, 1, 1], strides=[1, 2, 1, 1], padding='same',
+                                 ksize=[1, 2, 1, 1], strides=[1, 2, 1, 1], padding='SAME',
                                  name='l1_')
             l1 = tf.nn.dropout(l1b, p_keep_conv, name='l1')
 
@@ -153,21 +155,22 @@ def full_conn(input_, output_size, p_keep_hidden, act='relu'):
         shape of (output_size, )
 
     """
-    input_size = input_.get_shape()[-1].value
-    w4 = init_weights([input_size, output_size], name='w4')
+    with tf.name_scope('FullyConnected'):
+        input_size = input_.get_shape()[-1].value
+        w4 = init_weights([input_size, output_size], name='w4')
 
-    matmul_res = tf.matmul(input_, w4, name='FC_MatMul')
-    if act == 'relu':
-        act_func = tf.nn.relu
-    elif act == 'softmax':
-        act_func = tf.nn.softmax
-    elif act == 'sigmoid':
-        act_func = tf.nn.sigmoid
-    else:
-        act_func = tf.nn.relu
-    l4 = act_func(matmul_res, name='FC_act')
+        matmul_res = tf.matmul(input_, w4, name='FC_MatMul')
+        if act == 'relu':
+            act_func = tf.nn.relu
+        elif act == 'softmax':
+            act_func = tf.nn.softmax
+        elif act == 'sigmoid':
+            act_func = tf.nn.sigmoid
+        else:
+            act_func = tf.nn.relu
+        l4 = act_func(matmul_res, name='FC_act')
 
-    l4_drop = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
+        l4_drop = tf.nn.dropout(l4, p_keep_hidden, name='FC_dropout')
 
     output = l4_drop
     return output
@@ -190,7 +193,8 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     y_pred : Tensor
 
     """
-    conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    # conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
     conv_o_reshape = tf.reshape(conv_net_output, shape=[batch_size, -1])
 
     fc1_output = full_conn(conv_o_reshape, output_size=512, act='relu', p_keep_hidden=p_keep_2)
@@ -200,16 +204,18 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     return y_pred
 
 
-def build_and_fit():
+def build_and_train():
     # data
     from demo_fully_diff_ndf import load_custom_data
     trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
-
     # hyper-parameters
     batch_size = input_shape[0]
     # width, height = 30, 1
     n_channel = 1
     output_size = 10
+
+    # Create a Graph and set as default
+    g = tf.get_default_graph()  # tf.Graph()
 
     # placeholders
     X = tf.placeholder("float", shape=input_shape, name='X')
@@ -221,54 +227,39 @@ def build_and_fit():
     y_pred = build_model(X,
                          batch_size=batch_size, n_channel=n_channel, output_size=output_size,
                          p_keep_1=p_keep1, p_keep_2=p_keep2)
+    g.add_to_collection('predict_op', y_pred)
     loss = calc_loss(Y, y_pred, kind='cross_entropy')
     tf.summary.scalar('loss_cross_entropy', loss)
     optimizer = tf.train.AdamOptimizer()
     global_step = tf.Variable(0, name='global_step', trainable=False)
+    g.add_to_collection('global_step', global_step)
     train_step = opt(loss, optimizer, global_step_var=global_step)
 
-    # session
-    sess = tf.Session(config=None)
-
-    ckpt_fn = tf.train.latest_checkpoint(SAVE_DIR)
-    if ckpt_fn is not None:
-        meta_fn = ckpt_fn + '.meta'
-        saver = tf.train.import_meta_graph(meta_fn)
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
-        saver.restore(sess, ckpt_fn)
-
-        print("global step = ", tf.train.global_step(sess, global_step))
-
+    def test_():
         y_test_pred = run_predict(sess,
                                   X,
                                   teX, batch_size=batch_size,
                                   predict_step=y_pred,
                                   extra_feed_dict={p_keep1 : 1.0,
                                                    p_keep2 : 1.0})
+        accu = calc_accu(teY, y_test_pred)
+        tf.logging.info(accu)
 
-        ytrue = np.argmax(teY, axis=1)
-        yhat = np.argmax(y_test_pred, axis=1)
-        eq = ytrue == yhat
-        accu = np.mean(eq)
-        print(accu)
-        # rsq = calc_rsq(teY, y_test_pred)
-        # print(rsq)
-    else:
-        saver = tf.train.Saver(max_to_keep=4)
-
-        run_train(sess,
-                  X, Y,
-                  trX, trY, batch_size=batch_size, n_epoch=2,
-                  fetches=[train_step],
-                  extra_feed_dict={p_keep2 : 1.0,
-                                   p_keep1 : 1.0},
-                  merged_summary=None,  # tf.summary.merge_all(),
-                  writer_dir='simple_cnn_model',
-                  global_step_tensor=global_step,
-                  saver=saver,
-                  saver_dir=SAVE_DIR
-                  )
+    # try to restore
+    sess = tf.Session(graph=g, config=None)
+    run_train(sess,
+              X, Y,
+              trX, trY, batch_size=batch_size, n_epoch=100,
+              fetches=[train_step],
+              extra_feed_dict={p_keep2: 1.0,
+                               p_keep1: 1.0},
+              merged_summary=tf.summary.merge_all(),
+              writer_dir=SAVE_DIR,
+              global_step_tensor=global_step,
+              # saver=saver,
+              saver_dir=SAVE_DIR,
+              test_func=test_
+              )
 
 
 def calc_loss(y, yhat, kind='cross_entropy'):
@@ -298,7 +289,10 @@ def run_train(sess,
               writer_dir='',
               global_step_tensor=None,
               saver_dir='saved_model',
-              saver=None):
+              # saver=None
+              save_and_test_interval=100,
+              test_func=None,
+              ):
     """
 
     Parameters
@@ -316,21 +310,34 @@ def run_train(sess,
     writer_dir : str, default ''
     global_step_tensor : Tensor
     saver_dir : str
+    save_and_test_interval : int
+        How many steps to save and test current model.
+    test_func : callable, default None
+        test function to run.
 
     Returns
     -------
 
     """
 
+    # write event file (contains summaries)
     if merged_summary is not None and writer_dir:
         fetches.append(merged_summary)
         writer = tf.summary.FileWriter(writer_dir, sess.graph)
 
-    sess.run(tf.global_variables_initializer())
+    saver = tf.train.Saver(tf.global_variables(), max_to_keep=4)
+
+    ckpt_fp = tf.train.latest_checkpoint(SAVE_DIR)
+    if ckpt_fp is not None:
+        saver.restore(sess, ckpt_fp)
+    else:
+        sess.run(tf.global_variables_initializer())
 
     train_len = len(x_train)
-    tf.logging.info("Num. of iterations per epoch: {:d}".format(train_len // batch_size))
-    for epoch in range(1, n_epoch+1):
+    iter_per_epoch = train_len // batch_size
+    epoch_trained = tf.train.global_step(sess, global_step_tensor) // iter_per_epoch
+    tf.logging.info("Num. of iterations per epoch: {:d}".format(iter_per_epoch))
+    for epoch in range(epoch_trained+1, n_epoch+1):
         for start, end in tqdm(zip(range(0         , train_len, batch_size),
                                    range(batch_size, train_len, batch_size))):
             feeds = {x_ph: x_train[start: end],
@@ -340,9 +347,13 @@ def run_train(sess,
             res = sess.run(fetches=fetches, feed_dict=feeds)
 
             gs = tf.train.global_step(sess, global_step_tensor)
-            if saver is not None and gs % 100 == 0:
-                saver.save(sess, os.path.join(saver_dir, 'saved_model'),
-                           global_step=global_step_tensor)
+            if saver is not None and gs % save_and_test_interval == 0:
+                save_fp = os.path.join(saver_dir, 'saved_model')
+                saver.save(sess, save_fp, global_step=gs)
+                tf.logging.info("Global step = {:d}: model saved at {:s}".format(gs, save_fp))
+
+                if test_func is not None:
+                    test_func()
 
             if writer_dir:
                 if merged_summary is not None and writer_dir:
@@ -383,10 +394,87 @@ def run_predict(sess,
     return y_pred
 
 
-def predict_and_calc():
+def calc_accu(y, yhat):
+    """
+
+    Parameters
+    ----------
+    y : np.ndarray
+        shape of [n_samples, n_classes]
+    yhat : np.ndarray
+        shape of [n_samples, n_classes]
+
+    Returns
+    -------
+    accuracy : float
+
+    """
+    assert len(y) == len(yhat)
+
+    y = np.argmax(y, axis=1)
+    yhat = np.argmax(yhat, axis=1)
+
+    accuracy = np.mean(y == yhat)
+    return accuracy
+
+
+def run_score(sess,
+              x_ph, x_test, batch_size,
+              predict_step, extra_feed_dict=None):
     pass
 
+
+def predict_and_calc(sess_config=None):
+    # data
+    from demo_fully_diff_ndf import load_custom_data
+    trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
+    # hyper-parameters
+    batch_size = input_shape[0]
+
+    # reset default graph to avoid potential errors
+    tf.reset_default_graph()
+
+    ckpt_fp = tf.train.latest_checkpoint(SAVE_DIR)
+    meta_fp = '{}.meta'.format(ckpt_fp)
+
+    with tf.Session(config=sess_config) as sess:
+        new_saver = tf.train.import_meta_graph(meta_fp)
+        new_saver.restore(sess, ckpt_fp)
+
+        g = sess.graph
+
+        # restore global step, predict_op and placeholders
+        global_step = g.get_collection_ref('global_step')[0]
+        predict_op = g.get_collection_ref('predict_op')[0]
+        X = g.get_tensor_by_name('X:0')
+        p_keep1 = g.get_tensor_by_name('p_keep_conv:0')
+        p_keep2 = g.get_tensor_by_name('p_keep_hidden:0')
+
+        tf.logging.info("global step = {}".format(tf.train.global_step(sess, global_step)))
+
+        y_test_pred = run_predict(sess,
+                                  X,
+                                  teX, batch_size=batch_size,
+                                  predict_step=predict_op,
+                                  extra_feed_dict={p_keep1 : 1.0,
+                                                   p_keep2 : 1.0})
+
+        accu = calc_accu(teY, y_test_pred)
+        tf.logging.info(accu)
+        # rsq = calc_rsq(teY, y_test_pred)
+        # print(rsq)
+        y_test_pred = run_predict(sess,
+                                  X,
+                                  trX, batch_size=batch_size,
+                                  predict_step=predict_op,
+                                  extra_feed_dict={p_keep1 : 1.0,
+                                                   p_keep2 : 1.0})
+
+        accu = calc_accu(trY, y_test_pred)
+        tf.logging.info(accu)
+
+
 if __name__ == "__main__":
-    build_and_fit()
+    build_and_train()
     predict_and_calc()
 
