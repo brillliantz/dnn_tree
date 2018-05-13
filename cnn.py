@@ -47,6 +47,14 @@ def calc_accu(y, yhat):
     return accuracy
 
 
+def calc_accu_tf(y, yhat):
+    y = tf.argmax(y, axis=1)
+    yhat = tf.argmax(yhat, axis=1)
+
+    accuracy = tf.reduce_mean(tf.equal(y, yhat))
+    return accuracy
+
+
 def init_weights(shape, name=None):
     return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
 
@@ -292,12 +300,14 @@ def run_train(sess,
     # iter_per_epoch = train_len // batch_size
     # epoch_trained = tf.train.global_step(sess, global_step_tensor) // iter_per_epoch
     # tf.logging.info("Num. of iterations per epoch: {:d}".format(iter_per_epoch))
+    pbar = tqdm(total=save_and_eval_interval, desc="Training epoch {:d}.".format(1))
     for epoch in range(1, n_epoch+1):
         # tf.logging.info("Start to train epoch {:d}.".format(epoch))
-        pbar = tqdm(total=save_and_eval_interval, desc="Training epoch {:d}.".format(epoch))
         while True:
             # feed data using iterator until one epoch ends (OutOfRangeError)
             try:
+                pbar.update(1)
+
                 res = sess.run(fetches=fetches)
                 gs = tf.train.global_step(sess, global_step_tensor)
 
@@ -317,10 +327,10 @@ def run_train(sess,
                         score = sess.run(fetches=eval_op)
                         tf.logging.info("{:s}: {:.5f}".format(name, score))
 
-                pbar.update(1)
+                    pbar.close()
+                    pbar = tqdm(total=save_and_eval_interval, desc="Training epoch {:d}.".format(epoch))
 
             except tf.errors.OutOfRangeError:
-                pbar.close()
                 break
 
 
@@ -484,14 +494,14 @@ def build_and_train(sess_config):
     optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
     train_op = opt(train_loss_op, optimizer, global_step_var=global_step)
 
-    #train_rsq_op = calc_rsq_tf(Y, y_pred)
-    #test_rsq_op = calc_rsq_tf(y_test, y_pred_test)
+    train_score_op = calc_accu_tf(Y, y_pred)
+    test_score_op = calc_accu_tf(y_test, y_pred_test)
 
     # summary
     tf.summary.scalar('Train_Loss', train_loss_op)
     tf.summary.scalar('Test_Loss', test_loss_op)
-    #tf.summary.scalar('Train_Rsquared', train_rsq_op)
-    #tf.summary.scalar('Test_Rsquared', test_rsq_op)
+    tf.summary.scalar('Train_Rsquared', train_score_op)
+    tf.summary.scalar('Test_Rsquared', test_score_op)
 
     # try to restore
     sess = tf.Session(graph=g, config=sess_config)
@@ -504,8 +514,8 @@ def build_and_train(sess_config):
               writer_dir=SAVE_DIR,
               global_step_tensor=global_step,
               save_and_eval_interval=100,
-              eval_ops={'train rsq': train_loss_op,
-                        'test rsq' : test_loss_op},
+              eval_ops={'train rsq': train_score_op,
+                        'test rsq' : test_score_op},
               saver_dir=SAVE_DIR,
               )
 
