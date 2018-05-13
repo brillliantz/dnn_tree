@@ -22,8 +22,36 @@ def calc_rsq(y, yhat):
     return ret
 
 
+def calc_accu(y, yhat):
+    """
+
+    Parameters
+    ----------
+    y : np.ndarray
+        shape of [n_samples, n_classes]
+    yhat : np.ndarray
+        shape of [n_samples, n_classes]
+
+    Returns
+    -------
+    accuracy : float
+
+    """
+    assert len(y) == len(yhat)
+
+    y = np.argmax(y, axis=1)
+    yhat = np.argmax(yhat, axis=1)
+
+    accuracy = np.mean(y == yhat)
+    return accuracy
+
+
+
 def init_weights(shape, name=None):
     return tf.Variable(tf.random_normal(shape, stddev=0.01), name=name)
+
+#######################################################################
+# Various Layers
 
 
 def cnn_1d(input_, n_channel, p_keep_conv):
@@ -179,91 +207,8 @@ def full_conn(input_, output_size, p_keep_hidden, act='relu'):
     return output
 
 
-def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2):
-    """
-
-    Parameters
-    ----------
-    x_input : Tensor
-    batch_size : int
-    n_channel : int
-    output_size : int
-    p_keep_1 : Tensor
-    p_keep_2 : Tensor
-
-    Returns
-    -------
-    y_pred : Tensor
-
-    """
-    conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
-    # conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
-    conv_o_reshape = tf.reshape(conv_net_output, shape=[batch_size, -1])
-
-    fc1_output = full_conn(conv_o_reshape, output_size=512, act='relu', p_keep_hidden=p_keep_2)
-    fc2_output = full_conn(fc1_output, output_size=output_size, act='softmax', p_keep_hidden=p_keep_2)
-
-    y_pred = fc2_output
-    return y_pred
-
-
-def build_and_train(sess_config):
-    # data
-    from demo_fully_diff_ndf import load_custom_data
-    trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
-    # hyper-parameters
-    batch_size = input_shape[0]
-    # width, height = 30, 1
-    n_channel = 1
-    output_size = 10
-
-    # Create a Graph and set as default
-    g = tf.get_default_graph()  # tf.Graph()
-
-    # placeholders
-    X = tf.placeholder("float", shape=input_shape, name='X')
-    Y = tf.placeholder("float", shape=output_shape, name='Y')
-    p_keep1 = tf.placeholder("float", name='p_keep_conv')
-    p_keep2 = tf.placeholder("float", name='p_keep_hidden')
-
-    # model
-    y_pred = build_model(X,
-                         batch_size=batch_size, n_channel=n_channel, output_size=output_size,
-                         p_keep_1=p_keep1, p_keep_2=p_keep2)
-    g.add_to_collection('predict_op', y_pred)
-    loss = calc_loss(Y, y_pred, kind='cross_entropy')
-    tf.summary.scalar('loss_cross_entropy', loss)
-    optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
-    global_step = tf.Variable(0, name='global_step', trainable=False)
-    g.add_to_collection('global_step', global_step)
-    train_step = opt(loss, optimizer, global_step_var=global_step)
-
-    def test_():
-        y_test_pred = run_predict(sess,
-                                  X,
-                                  teX, batch_size=batch_size,
-                                  predict_step=y_pred,
-                                  extra_feed_dict={p_keep1 : 1.0,
-                                                   p_keep2 : 1.0})
-        accu = calc_accu(teY, y_test_pred)
-        tf.logging.info(accu)
-
-    # try to restore
-    sess = tf.Session(graph=g, config=sess_config)
-    run_train(sess,
-              X, Y,
-              trX, trY, batch_size=batch_size, n_epoch=100,
-              fetches=[train_step],
-              extra_feed_dict={p_keep2: 1.0,
-                               p_keep1: 1.0},
-              merged_summary=tf.summary.merge_all(),
-              writer_dir=SAVE_DIR,
-              global_step_tensor=global_step,
-              save_and_test_interval=1000,
-              # saver=saver,
-              saver_dir=SAVE_DIR,
-              test_func=test_
-              )
+#######################################################################
+# Loss and Optimization
 
 
 def calc_loss(y, yhat, kind='cross_entropy'):
@@ -285,6 +230,9 @@ def opt(loss, optimizer, global_step_var=None):
     minimize_operation = optimizer.minimize(loss, global_step=global_step_var)
     return minimize_operation
 
+
+#######################################################################
+# Train and Predict
 
 def run_train(sess,
               x_ph, y_ph, x_train, y_train, batch_size, n_epoch,
@@ -398,34 +346,101 @@ def run_predict(sess,
     return y_pred
 
 
-def calc_accu(y, yhat):
-    """
-
-    Parameters
-    ----------
-    y : np.ndarray
-        shape of [n_samples, n_classes]
-    yhat : np.ndarray
-        shape of [n_samples, n_classes]
-
-    Returns
-    -------
-    accuracy : float
-
-    """
-    assert len(y) == len(yhat)
-
-    y = np.argmax(y, axis=1)
-    yhat = np.argmax(yhat, axis=1)
-
-    accuracy = np.mean(y == yhat)
-    return accuracy
-
-
 def run_score(sess,
               x_ph, x_test, batch_size,
               predict_step, extra_feed_dict=None):
     pass
+
+
+#######################################################################
+# Main functions
+
+
+def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2):
+    """
+
+    Parameters
+    ----------
+    x_input : Tensor
+    batch_size : int
+    n_channel : int
+    output_size : int
+    p_keep_1 : Tensor
+    p_keep_2 : Tensor
+
+    Returns
+    -------
+    y_pred : Tensor
+
+    """
+    conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    # conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    conv_o_reshape = tf.reshape(conv_net_output, shape=[batch_size, -1])
+
+    fc1_output = full_conn(conv_o_reshape, output_size=512, act='relu', p_keep_hidden=p_keep_2)
+    fc2_output = full_conn(fc1_output, output_size=output_size, act='softmax', p_keep_hidden=p_keep_2)
+
+    y_pred = fc2_output
+    return y_pred
+
+
+def build_and_train(sess_config):
+    # data
+    from demo_fully_diff_ndf import load_custom_data
+    trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
+    # hyper-parameters
+    batch_size = input_shape[0]
+    # width, height = 30, 1
+    n_channel = 1
+    output_size = 10
+
+    # Create a Graph and set as default
+    g = tf.get_default_graph()  # tf.Graph()
+
+    # placeholders
+    X = tf.placeholder("float", shape=input_shape, name='X')
+    Y = tf.placeholder("float", shape=output_shape, name='Y')
+    p_keep1 = tf.placeholder("float", name='p_keep_conv')
+    p_keep2 = tf.placeholder("float", name='p_keep_hidden')
+
+    # model
+    y_pred = build_model(X,
+                         batch_size=batch_size, n_channel=n_channel, output_size=output_size,
+                         p_keep_1=p_keep1, p_keep_2=p_keep2)
+    g.add_to_collection('predict_op', y_pred)
+    loss = calc_loss(Y, y_pred, kind='cross_entropy')
+    tf.summary.scalar('loss_cross_entropy', loss)
+    optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
+    global_step = tf.Variable(0, name='global_step', trainable=False)
+    g.add_to_collection('global_step', global_step)
+    train_step = opt(loss, optimizer, global_step_var=global_step)
+
+    def test_():
+        y_test_pred = run_predict(sess,
+                                  X,
+                                  teX, batch_size=batch_size,
+                                  predict_step=y_pred,
+                                  extra_feed_dict={p_keep1 : 1.0,
+                                                   p_keep2 : 1.0})
+        accu = calc_accu(teY, y_test_pred)
+        tf.logging.info(accu)
+
+    # try to restore
+    sess = tf.Session(graph=g, config=sess_config)
+    run_train(sess,
+              X, Y,
+              trX, trY, batch_size=batch_size, n_epoch=100,
+              fetches=[train_step],
+              extra_feed_dict={p_keep2: 1.0,
+                               p_keep1: 1.0},
+              merged_summary=tf.summary.merge_all(),
+              writer_dir=SAVE_DIR,
+              global_step_tensor=global_step,
+              save_and_test_interval=1000,
+              # saver=saver,
+              saver_dir=SAVE_DIR,
+              test_func=test_
+              )
 
 
 def predict_and_calc(sess_config=None):
