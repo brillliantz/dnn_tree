@@ -105,7 +105,6 @@ def cnn_1d(input_, n_channel, p_keep_conv):
                                  name='l3_')
 
             l3 = tf.nn.dropout(l3b, p_keep_conv, name='l3')
-            #l3c = tf.reshape(l3b, [batch_size, -1], name='l3_reshape')
 
     output = l3
     return output
@@ -162,7 +161,6 @@ def cnn_2d(input_, n_channel, p_keep_conv):
                                  name='l3_')
 
             l3 = tf.nn.dropout(l3b, p_keep_conv, name='l3')
-            #l3c = tf.reshape(l3b, [batch_size, -1], name='l3_reshape')
 
     output = l3
     return output
@@ -211,7 +209,7 @@ def full_conn(input_, output_size, p_keep_hidden, act='relu'):
 # Loss and Optimization
 
 
-def calc_loss(y, yhat, kind='cross_entropy'):
+def calc_loss_tf(y, yhat, kind='cross_entropy'):
     if kind == 'mse':
         loss = tf.reduce_sum(
             tf.losses.mean_squared_error(y, yhat),
@@ -224,6 +222,15 @@ def calc_loss(y, yhat, kind='cross_entropy'):
         raise NotImplemented
 
     return loss
+
+
+def calc_rsq_tf(y, yhat):
+    residue = tf.subtract(y, yhat, name='residue')
+    ss_residue = tf.square(residue)
+    y_mean = tf.reduce_mean(y, name='y_mean')
+    ss_total = tf.reduce_mean(tf.square(tf.subtract(y, y_mean)))
+    res = tf.subtract(tf.constant(1.0), ss_residue / ss_total)
+    return res
 
 
 def opt(loss, optimizer, global_step_var=None):
@@ -243,7 +250,8 @@ def run_train(sess,
               saver_dir='saved_model',
               # saver=None
               save_and_test_interval=100,
-              test_func=None,
+              score_op=None,
+              x_test=None, y_test=None
               ):
     """
 
@@ -264,8 +272,8 @@ def run_train(sess,
     saver_dir : str
     save_and_test_interval : int
         How many steps to save and test current model.
-    test_func : callable, default None
-        test function to run.
+    score_op : tf.Tensor
+        Tensor to calculate score (as an indication of model performance).
 
     Returns
     -------
@@ -276,6 +284,9 @@ def run_train(sess,
     if merged_summary is not None and writer_dir:
         fetches.append(merged_summary)
         writer = tf.summary.FileWriter(writer_dir, sess.graph)
+
+    if extra_feed_dict is None:
+        extra_feed_dict = dict()
 
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=4)
 
@@ -292,9 +303,9 @@ def run_train(sess,
     for epoch in range(epoch_trained+1, n_epoch+1):
         for start, end in tqdm(zip(range(0         , train_len, batch_size),
                                    range(batch_size, train_len, batch_size))):
-            feeds = {x_ph: x_train[start: end],
-                     y_ph: y_train[start: end]}
-            feeds.update(extra_feed_dict)
+            feeds = extra_feed_dict.copy()
+            feeds.update({x_ph: x_train[start: end],
+                          y_ph: y_train[start: end]})
 
             res = sess.run(fetches=fetches, feed_dict=feeds)
 
@@ -304,8 +315,18 @@ def run_train(sess,
                 saver.save(sess, save_fp, global_step=gs)
                 tf.logging.info("Global step = {:d}: model saved at {:s}".format(gs, save_fp))
 
-                if test_func is not None:
-                    test_func()
+                if score_op is not None:
+                    feeds = extra_feed_dict.copy()
+                    feeds.update({x_ph: x_train,
+                                  y_ph: y_train})
+                    score = sess.run(fetches=score_op, feed_dict=feeds)
+                    tf.logging.info("Train score: {:.5f}".format(score))
+                    if x_test is not None and y_test is not None:
+                        feeds = extra_feed_dict.copy()
+                        feeds.update({x_ph: x_test,
+                                      y_ph: y_test})
+                        score = sess.run(fetches=score_op, feed_dict=feeds)
+                        tf.logging.info("Test score: {:.5f}".format(score))
 
             if writer_dir:
                 if merged_summary is not None and writer_dir:
@@ -315,7 +336,7 @@ def run_train(sess,
                     writer.flush()
 
 
-def run_predict(sess,
+def run_predict_old(sess,
                 x_ph, x_test, batch_size,
                 predict_step, extra_feed_dict=None):
     results = []
@@ -346,10 +367,48 @@ def run_predict(sess,
     return y_pred
 
 
+def run_predict(sess,
+                x_ph, x_test,
+                predict_op, extra_feed_dict=None):
+    feeds = {x_ph: x_test}
+    if extra_feed_dict is not None:
+        feeds.update(extra_feed_dict)
+
+    y_pred = sess.run(predict_op, feed_dict=feeds)
+    return y_pred
+
+
 def run_score(sess,
-              x_ph, x_test, batch_size,
-              predict_step, extra_feed_dict=None):
-    pass
+              x_ph, x_test, y_test,
+              predict_op,
+              score_func,
+              extra_feed_dict=None):
+    """
+
+    Parameters
+    ----------
+    sess : tf.Session
+    x_ph : tf.placeholder
+    x_test : np.ndarray
+        of shape [batch, ...]
+    y_test : np.ndarray
+        of shape [batch, ...]
+    predict_op : tf.Tensor
+    score_func : callable
+        score_func takes (ytrue, yhat) as parameter and returns a float
+    extra_feed_dict : dict. Optional, default None
+
+    Returns
+    -------
+    score : float
+
+    """
+    y_pred = run_predict(sess,
+                         x_ph=x_ph, x_test=x_test,
+                         predict_op=predict_op,
+                         extra_feed_dict=extra_feed_dict)
+    score = score_func(y_test, y_pred)
+    return score
 
 
 #######################################################################
@@ -375,9 +434,11 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     """
     conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
     # conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
-    conv_o_reshape = tf.reshape(conv_net_output, shape=[batch_size, -1])
+    shape = conv_net_output.get_shape().as_list()
+    shape_without_batch = shape[1:]
+    input_for_fc = tf.reshape(conv_net_output, shape=[-1, np.prod(shape_without_batch)])
 
-    fc1_output = full_conn(conv_o_reshape, output_size=512, act='relu', p_keep_hidden=p_keep_2)
+    fc1_output = full_conn(input_for_fc, output_size=512, act='relu', p_keep_hidden=p_keep_2)
     fc2_output = full_conn(fc1_output, output_size=output_size, act='softmax', p_keep_hidden=p_keep_2)
 
     y_pred = fc2_output
@@ -390,6 +451,10 @@ def build_and_train(sess_config):
     trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
     # hyper-parameters
     batch_size = input_shape[0]
+    input_shape = list(input_shape)
+    input_shape[0] = None
+    output_shape = list(output_shape)
+    output_shape[0] = None
     # width, height = 30, 1
     n_channel = 1
     output_size = 10
@@ -400,28 +465,32 @@ def build_and_train(sess_config):
     # placeholders
     X = tf.placeholder("float", shape=input_shape, name='X')
     Y = tf.placeholder("float", shape=output_shape, name='Y')
+
     p_keep1 = tf.placeholder("float", name='p_keep_conv')
     p_keep2 = tf.placeholder("float", name='p_keep_hidden')
+
+    global_step = tf.Variable(0, name='global_step', trainable=False)
+    g.add_to_collection('global_step', global_step)
 
     # model
     y_pred = build_model(X,
                          batch_size=batch_size, n_channel=n_channel, output_size=output_size,
                          p_keep_1=p_keep1, p_keep_2=p_keep2)
     g.add_to_collection('predict_op', y_pred)
-    loss = calc_loss(Y, y_pred, kind='cross_entropy')
-    tf.summary.scalar('loss_cross_entropy', loss)
+    loss_op = calc_loss_tf(Y, y_pred, kind='cross_entropy')
     optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
-    global_step = tf.Variable(0, name='global_step', trainable=False)
-    g.add_to_collection('global_step', global_step)
-    train_step = opt(loss, optimizer, global_step_var=global_step)
+    train_op = opt(loss_op, optimizer, global_step_var=global_step)
+    rsq_op = calc_rsq_tf(Y, y_pred)
+
+    # summary
+    tf.summary.scalar('loss_cross_entropy', loss_op)
 
     def test_():
         y_test_pred = run_predict(sess,
-                                  X,
-                                  teX, batch_size=batch_size,
-                                  predict_step=y_pred,
-                                  extra_feed_dict={p_keep1 : 1.0,
-                                                   p_keep2 : 1.0})
+                                  X, teX,
+                                  predict_op=y_pred,
+                                  extra_feed_dict={p_keep1: 1.0,
+                                                   p_keep2: 1.0})
         accu = calc_accu(teY, y_test_pred)
         tf.logging.info(accu)
 
@@ -430,16 +499,17 @@ def build_and_train(sess_config):
     run_train(sess,
               X, Y,
               trX, trY, batch_size=batch_size, n_epoch=100,
-              fetches=[train_step],
+              fetches=[train_op],
               extra_feed_dict={p_keep2: 1.0,
                                p_keep1: 1.0},
               merged_summary=tf.summary.merge_all(),
               writer_dir=SAVE_DIR,
               global_step_tensor=global_step,
-              save_and_test_interval=1000,
+              save_and_test_interval=100,
               # saver=saver,
               saver_dir=SAVE_DIR,
-              test_func=test_
+              score_op=rsq_op,
+              x_test=teX, y_test=teY,
               )
 
 
@@ -472,9 +542,8 @@ def predict_and_calc(sess_config=None):
         tf.logging.info("global step = {}".format(tf.train.global_step(sess, global_step)))
 
         y_test_pred = run_predict(sess,
-                                  X,
-                                  teX, batch_size=batch_size,
-                                  predict_step=predict_op,
+                                  X, teX,
+                                  predict_op=predict_op,
                                   extra_feed_dict={p_keep1 : 1.0,
                                                    p_keep2 : 1.0})
 
@@ -483,11 +552,10 @@ def predict_and_calc(sess_config=None):
         # rsq = calc_rsq(teY, y_test_pred)
         # print(rsq)
         y_test_pred = run_predict(sess,
-                                  X,
-                                  trX, batch_size=batch_size,
-                                  predict_step=predict_op,
-                                  extra_feed_dict={p_keep1 : 1.0,
-                                                   p_keep2 : 1.0})
+                                  X, trX,
+                                  predict_op=predict_op,
+                                  extra_feed_dict={p_keep1: 1.0,
+                                                   p_keep2: 1.0})
 
         accu = calc_accu(trY, y_test_pred)
         tf.logging.info(accu)
@@ -495,5 +563,5 @@ def predict_and_calc(sess_config=None):
 
 if __name__ == "__main__":
     build_and_train(gpu_config.gpuconfig)
-    predict_and_calc(gpu_config.gpuconfig)
+    # predict_and_calc(gpu_config.gpuconfig)
 
