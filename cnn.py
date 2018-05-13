@@ -7,8 +7,11 @@ from tqdm import tqdm
 import time
 import os
 
+import gpu_config
+
 tf.logging.set_verbosity(tf.logging.INFO)
 
+LEARNING_RATE = 1E-4
 SAVE_DIR = 'simple_cnn_model_1d'
 # SAVE_DIR = 'simple_cnn_model_2d'
 
@@ -204,7 +207,7 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     return y_pred
 
 
-def build_and_train():
+def build_and_train(sess_config):
     # data
     from demo_fully_diff_ndf import load_custom_data
     trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
@@ -230,7 +233,7 @@ def build_and_train():
     g.add_to_collection('predict_op', y_pred)
     loss = calc_loss(Y, y_pred, kind='cross_entropy')
     tf.summary.scalar('loss_cross_entropy', loss)
-    optimizer = tf.train.AdamOptimizer()
+    optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
     global_step = tf.Variable(0, name='global_step', trainable=False)
     g.add_to_collection('global_step', global_step)
     train_step = opt(loss, optimizer, global_step_var=global_step)
@@ -246,7 +249,7 @@ def build_and_train():
         tf.logging.info(accu)
 
     # try to restore
-    sess = tf.Session(graph=g, config=None)
+    sess = tf.Session(graph=g, config=sess_config)
     run_train(sess,
               X, Y,
               trX, trY, batch_size=batch_size, n_epoch=100,
@@ -256,6 +259,7 @@ def build_and_train():
               merged_summary=tf.summary.merge_all(),
               writer_dir=SAVE_DIR,
               global_step_tensor=global_step,
+              save_and_test_interval=1000,
               # saver=saver,
               saver_dir=SAVE_DIR,
               test_func=test_
@@ -475,6 +479,6 @@ def predict_and_calc(sess_config=None):
 
 
 if __name__ == "__main__":
-    build_and_train()
-    predict_and_calc()
+    build_and_train(gpu_config.gpuconfig)
+    predict_and_calc(gpu_config.gpuconfig)
 

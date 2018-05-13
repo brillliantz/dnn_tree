@@ -196,13 +196,7 @@ For each sample in a batch, P(Y | X) are probabilities of each class.
 
 """
 
-# use limited GPU resources
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '3'
-
-import tensorflow as tf
-gpuconfig = tf.ConfigProto()
-gpuconfig.gpu_options.allow_growth = True
+import gpu_config
 
 import math
 import numpy as np
@@ -627,7 +621,7 @@ def init_and_run():
     print("Start init_and_run.")
 
     # prepare session and do initialization
-    sess = tf.Session(config=gpuconfig)
+    sess = tf.Session(config=gpu_config.gpuconfig)
 
     # summary writer
     merged = tf.summary.merge_all()
