@@ -197,6 +197,7 @@ For each sample in a batch, P(Y | X) are probabilities of each class.
 """
 
 import gpu_config
+import tensorflow as tf
 
 import math
 import numpy as np
@@ -226,9 +227,9 @@ def variable_summaries(var, name=''):
 
 
 def calc_rsq_tf(y, yhat):
-    total_error = tf.reduce_sum(tf.square(tf.sub(y, tf.reduce_mean(y))), name='total_error')
-    unexplained_error = tf.reduce_sum(tf.square(tf.sub(y, yhat)), name='unexplained_error')
-    r_squared = tf.sub(1, tf.div(unexplained_error, total_error), name='Rsquared')
+    total_error = tf.reduce_sum(tf.square(tf.subtract(y, tf.reduce_mean(y))), name='total_error')
+    unexplained_error = tf.reduce_sum(tf.square(tf.subtract(y, yhat)), name='unexplained_error')
+    r_squared = tf.subtract(1, tf.divide(unexplained_error, total_error), name='Rsquared')
     return r_squared
 
 
