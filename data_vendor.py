@@ -1,6 +1,8 @@
 # encoding: utf-8
 
+import numpy as np
 import pandas as pd
+import tensorflow as tf
 from sklearn.model_selection import train_test_split
 
 
@@ -42,6 +44,44 @@ class DataWineQuality(DataVendor):
         n_cols = X.shape[1]
         self.input_shape_without_batch = (n_cols, )
         self.n_classes = 10
+
+
+class DataMNIST_new(DataVendor):
+    def get_data(self, test_size=0.3, shuffle=True, random_state=369):
+        from sklearn.preprocessing import OneHotEncoder
+        f = np.load('Data/MNIST/mnist.npz')
+        x_train, y_train = f['x_train'], f['y_train']
+        x_test, y_test = f['x_test'], f['y_test']
+
+        x_train = x_train / 256.0
+        x_test = x_test / 256.0
+        x_train = np.expand_dims(x_train, 3)
+        x_test = np.expand_dims(x_test, 3)
+        y_train = y_train.reshape([-1, 1])
+        y_test = y_test.reshape([-1, 1])
+
+        encoder = OneHotEncoder(n_values=10, sparse=False)
+        y_train = encoder.fit_transform(y_train)
+        y_test = encoder.fit_transform(y_test)
+
+        x_train = x_train.astype(np.float32)
+        x_test = x_test.astype(np.float32)
+        y_train = y_train.astype(np.float32)
+        y_test = y_test.astype(np.float32)
+
+        ds_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
+        ds_test = tf.data.Dataset.from_tensor_slices((x_test, y_test))
+        return ds_train, ds_test, self.input_shape_without_batch, self.n_classes
+
+    def prepare_data(self):
+        # If use cnn: Given an input tensor of shape `[batch, in_height, in_width, in_channels]`
+        self.input_shape_without_batch = (28, 28, 1)
+
+        # If use dnn
+        # self.input_shape_without_batch = (28 * 28, )
+
+        n_labels = 10
+        self.n_classes = n_labels
 
 
 class DataMNIST(DataVendor):

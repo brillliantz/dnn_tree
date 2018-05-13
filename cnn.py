@@ -13,6 +13,7 @@ tf.logging.set_verbosity(tf.logging.INFO)
 
 LEARNING_RATE = 1E-4
 SAVE_DIR = 'simple_cnn_model_1d'
+DROPOUT_KEEP_PROB = 1.0
 # SAVE_DIR = 'simple_cnn_model_2d'
 
 
@@ -44,7 +45,6 @@ def calc_accu(y, yhat):
 
     accuracy = np.mean(y == yhat)
     return accuracy
-
 
 
 def init_weights(shape, name=None):
@@ -242,38 +242,31 @@ def opt(loss, optimizer, global_step_var=None):
 # Train and Predict
 
 def run_train(sess,
-              x_ph, y_ph, x_train, y_train, batch_size, n_epoch,
-              fetches, extra_feed_dict,
+              batch_size, n_epoch,
+              fetches,
               merged_summary=None,
               writer_dir='',
               global_step_tensor=None,
+              save_and_eval_interval=100,
+              eval_ops=None,
               saver_dir='saved_model',
-              # saver=None
-              save_and_test_interval=100,
-              score_op=None,
-              x_test=None, y_test=None
               ):
     """
 
     Parameters
     ----------
     sess : tf.Session
-    x_ph : placeholder
-    y_ph : placeholder
-    x_train
-    y_train
     batch_size : int
     n_epoch : int
     fetches : list
-    extra_feed_dict : dict
     merged_summary
     writer_dir : str, default ''
     global_step_tensor : Tensor
     saver_dir : str
-    save_and_test_interval : int
+    save_and_eval_interval : int
         How many steps to save and test current model.
-    score_op : tf.Tensor
-        Tensor to calculate score (as an indication of model performance).
+    eval_ops : dict
+        {str: tf.Tensor}
 
     Returns
     -------
@@ -285,8 +278,8 @@ def run_train(sess,
         fetches.append(merged_summary)
         writer = tf.summary.FileWriter(writer_dir, sess.graph)
 
-    if extra_feed_dict is None:
-        extra_feed_dict = dict()
+    if eval_ops is None:
+        eval_ops = dict()
 
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=4)
 
@@ -296,44 +289,39 @@ def run_train(sess,
     else:
         sess.run(tf.global_variables_initializer())
 
-    train_len = len(x_train)
-    iter_per_epoch = train_len // batch_size
-    epoch_trained = tf.train.global_step(sess, global_step_tensor) // iter_per_epoch
-    tf.logging.info("Num. of iterations per epoch: {:d}".format(iter_per_epoch))
-    for epoch in range(epoch_trained+1, n_epoch+1):
-        for start, end in tqdm(zip(range(0         , train_len, batch_size),
-                                   range(batch_size, train_len, batch_size))):
-            feeds = extra_feed_dict.copy()
-            feeds.update({x_ph: x_train[start: end],
-                          y_ph: y_train[start: end]})
+    # iter_per_epoch = train_len // batch_size
+    # epoch_trained = tf.train.global_step(sess, global_step_tensor) // iter_per_epoch
+    # tf.logging.info("Num. of iterations per epoch: {:d}".format(iter_per_epoch))
+    for epoch in range(1, n_epoch+1):
+        # tf.logging.info("Start to train epoch {:d}.".format(epoch))
+        pbar = tqdm(total=save_and_eval_interval, desc="Training epoch {:d}.".format(epoch))
+        while True:
+            # feed data using iterator until one epoch ends (OutOfRangeError)
+            try:
+                res = sess.run(fetches=fetches)
+                gs = tf.train.global_step(sess, global_step_tensor)
 
-            res = sess.run(fetches=fetches, feed_dict=feeds)
+                if writer_dir:
+                    if merged_summary is not None and writer_dir:
+                        res_fetch, res_summary = res[: -1], res[-1]
+                        writer.add_summary(res_summary,
+                                           global_step=gs)
+                        writer.flush()
 
-            gs = tf.train.global_step(sess, global_step_tensor)
-            if saver is not None and gs % save_and_test_interval == 0:
-                save_fp = os.path.join(saver_dir, 'saved_model')
-                saver.save(sess, save_fp, global_step=gs)
-                tf.logging.info("Global step = {:d}: model saved at {:s}".format(gs, save_fp))
+                if saver is not None and gs % save_and_eval_interval == 0:
+                    save_fp = os.path.join(saver_dir, 'saved_model')
+                    saver.save(sess, save_fp, global_step=gs)
+                    tf.logging.info("Global step = {:d}: model saved at {:s}".format(gs, save_fp))
 
-                if score_op is not None:
-                    feeds = extra_feed_dict.copy()
-                    feeds.update({x_ph: x_train,
-                                  y_ph: y_train})
-                    score = sess.run(fetches=score_op, feed_dict=feeds)
-                    tf.logging.info("Train score: {:.5f}".format(score))
-                    if x_test is not None and y_test is not None:
-                        feeds = extra_feed_dict.copy()
-                        feeds.update({x_ph: x_test,
-                                      y_ph: y_test})
-                        score = sess.run(fetches=score_op, feed_dict=feeds)
-                        tf.logging.info("Test score: {:.5f}".format(score))
+                    for name, eval_op in eval_ops.items():
+                        score = sess.run(fetches=eval_op)
+                        tf.logging.info("{:s}: {:.5f}".format(name, score))
 
-            if writer_dir:
-                if merged_summary is not None and writer_dir:
-                    res_fetch, res_summary = res[: -1], res[-1]
-                    writer.add_summary(res_summary,
-                                       global_step=gs)
-                    writer.flush()
+                pbar.update(1)
+
+            except tf.errors.OutOfRangeError:
+                pbar.close()
+                break
 
 
 def run_predict_old(sess,
@@ -415,14 +403,14 @@ def run_score(sess,
 # Main functions
 
 
-def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2):
+def build_model(x_input, input_channel, output_size):
     """
 
     Parameters
     ----------
     x_input : Tensor
     batch_size : int
-    n_channel : int
+    input_channel : int
     output_size : int
     p_keep_1 : Tensor
     p_keep_2 : Tensor
@@ -432,12 +420,20 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
     y_pred : Tensor
 
     """
-    conv_net_output = cnn_1d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+    # hyper-parameters
+    p_keep_1 = tf.Variable(tf.constant(DROPOUT_KEEP_PROB), name='p_keep_conv')
+    p_keep_2 = tf.Variable(tf.constant(DROPOUT_KEEP_PROB), name='p_keep_hidden')
+
+    # conv layers
+    conv_net_output = cnn_1d(x_input, n_channel=input_channel, p_keep_conv=p_keep_1)
     # conv_net_output = cnn_2d(x_input, n_channel=n_channel, p_keep_conv=p_keep_1)
+
+    # reshape
     shape = conv_net_output.get_shape().as_list()
     shape_without_batch = shape[1:]
     input_for_fc = tf.reshape(conv_net_output, shape=[-1, np.prod(shape_without_batch)])
 
+    # fully connected layers
     fc1_output = full_conn(input_for_fc, output_size=512, act='relu', p_keep_hidden=p_keep_2)
     fc2_output = full_conn(fc1_output, output_size=output_size, act='softmax', p_keep_hidden=p_keep_2)
 
@@ -447,69 +443,70 @@ def build_model(x_input, batch_size, n_channel, output_size, p_keep_1, p_keep_2)
 
 def build_and_train(sess_config):
     # data
-    from demo_fully_diff_ndf import load_custom_data
-    trX, teX, trY, teY, n_class, input_shape, output_shape, is_regression = load_custom_data()
+    from data_vendor import DataMNIST_new
+    vendor = DataMNIST_new()
+    ds_train, ds_test, input_shape_without_batch, n_classes = vendor.get_data()
+
     # hyper-parameters
-    batch_size = input_shape[0]
-    input_shape = list(input_shape)
-    input_shape[0] = None
-    output_shape = list(output_shape)
-    output_shape[0] = None
-    # width, height = 30, 1
+    batch_size = 110
+    input_shape = list(input_shape_without_batch).insert(0, None)
+    output_shape = [None, n_classes]
     n_channel = 1
-    output_size = 10
+
+    # Dataset Iterator
+    ds_train = ds_train.batch(batch_size)
+    ds_test = ds_test.repeat().batch(10000)
+    itr_train = ds_train.make_initializable_iterator()
+    itr_test = ds_test.make_initializable_iterator()
+    X, Y = itr_train.get_next()
+    x_test, y_test = itr_test.get_next()
 
     # Create a Graph and set as default
     g = tf.get_default_graph()  # tf.Graph()
 
     # placeholders
-    X = tf.placeholder("float", shape=input_shape, name='X')
-    Y = tf.placeholder("float", shape=output_shape, name='Y')
-
-    p_keep1 = tf.placeholder("float", name='p_keep_conv')
-    p_keep2 = tf.placeholder("float", name='p_keep_hidden')
+    # X = tf.placeholder("float", shape=input_shape, name='X')
+    # Y = tf.placeholder("float", shape=output_shape, name='Y')
 
     global_step = tf.Variable(0, name='global_step', trainable=False)
     g.add_to_collection('global_step', global_step)
 
     # model
     y_pred = build_model(X,
-                         batch_size=batch_size, n_channel=n_channel, output_size=output_size,
-                         p_keep_1=p_keep1, p_keep_2=p_keep2)
+                         input_channel=n_channel, output_size=n_classes, )
+    y_pred_test = build_model(x_test,
+                              input_channel=n_channel, output_size=n_classes, )
     g.add_to_collection('predict_op', y_pred)
-    loss_op = calc_loss_tf(Y, y_pred, kind='cross_entropy')
+
+    train_loss_op = calc_loss_tf(Y, y_pred, kind='cross_entropy')
+    test_loss_op = calc_loss_tf(y_test, y_pred_test, kind='cross_entropy')
+
     optimizer = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE)
-    train_op = opt(loss_op, optimizer, global_step_var=global_step)
-    rsq_op = calc_rsq_tf(Y, y_pred)
+    train_op = opt(train_loss_op, optimizer, global_step_var=global_step)
+
+    #train_rsq_op = calc_rsq_tf(Y, y_pred)
+    #test_rsq_op = calc_rsq_tf(y_test, y_pred_test)
 
     # summary
-    tf.summary.scalar('loss_cross_entropy', loss_op)
-
-    def test_():
-        y_test_pred = run_predict(sess,
-                                  X, teX,
-                                  predict_op=y_pred,
-                                  extra_feed_dict={p_keep1: 1.0,
-                                                   p_keep2: 1.0})
-        accu = calc_accu(teY, y_test_pred)
-        tf.logging.info(accu)
+    tf.summary.scalar('Train_Loss', train_loss_op)
+    tf.summary.scalar('Test_Loss', test_loss_op)
+    #tf.summary.scalar('Train_Rsquared', train_rsq_op)
+    #tf.summary.scalar('Test_Rsquared', test_rsq_op)
 
     # try to restore
     sess = tf.Session(graph=g, config=sess_config)
+    sess.run(itr_train.initializer)
+    sess.run(itr_test.initializer)
     run_train(sess,
-              X, Y,
-              trX, trY, batch_size=batch_size, n_epoch=100,
+              batch_size=batch_size, n_epoch=100,
               fetches=[train_op],
-              extra_feed_dict={p_keep2: 1.0,
-                               p_keep1: 1.0},
               merged_summary=tf.summary.merge_all(),
               writer_dir=SAVE_DIR,
               global_step_tensor=global_step,
-              save_and_test_interval=100,
-              # saver=saver,
+              save_and_eval_interval=100,
+              eval_ops={'train rsq': train_loss_op,
+                        'test rsq' : test_loss_op},
               saver_dir=SAVE_DIR,
-              score_op=rsq_op,
-              x_test=teX, y_test=teY,
               )
 
 
@@ -543,9 +540,7 @@ def predict_and_calc(sess_config=None):
 
         y_test_pred = run_predict(sess,
                                   X, teX,
-                                  predict_op=predict_op,
-                                  extra_feed_dict={p_keep1 : 1.0,
-                                                   p_keep2 : 1.0})
+                                  predict_op=predict_op,)
 
         accu = calc_accu(teY, y_test_pred)
         tf.logging.info(accu)
@@ -554,14 +549,74 @@ def predict_and_calc(sess_config=None):
         y_test_pred = run_predict(sess,
                                   X, trX,
                                   predict_op=predict_op,
-                                  extra_feed_dict={p_keep1: 1.0,
-                                                   p_keep2: 1.0})
+                                  )
 
         accu = calc_accu(trY, y_test_pred)
         tf.logging.info(accu)
 
 
+def dataset_example():
+    from sklearn.preprocessing import OneHotEncoder
+    with np.load('Data/MNIST/mnist.npz') as f:
+        x_train, y_train = f['x_train'], f['y_train']
+        x_test, y_test = f['x_test'], f['y_test']
+
+        x_train = x_train / 256.0
+        x_test = x_test / 256.0
+        y_train = y_train.reshape([-1, 1])
+        y_test = y_test.reshape([-1, 1])
+
+        encoder = OneHotEncoder(n_values=10)
+        y_train = encoder.fit_transform(y_train)
+        y_test = encoder.fit_transform(y_test)
+
+        x_train = x_train.astype(np.float32)
+        x_test = x_test.astype(np.float32)
+        y_train = y_train.astype(np.float32)
+        y_test = y_test.astype(np.float32)
+
+    # ds_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
+    ds_train = tf.data.Dataset.from_tensor_slices(x_train)
+    ds_train = ds_train.map(lambda x: tf.cast(x, tf.float32))
+    print(ds_train)
+
+    batch_size = 500
+    ds_train = ds_train.repeat(100)
+    ds_train = ds_train.batch(batch_size)
+    def _batch_normalization(tensor_in, epsilon=.0001):
+        mean, variance = tf.nn.moments(tensor_in, axes=[0])
+        print(mean)
+        tensor_normalized = (tensor_in - mean) / (variance + epsilon)
+        return tensor_normalized
+    # ds_train = ds_train.map(_batch_normalization)
+
+    iterator = ds_train.make_initializable_iterator()
+    next_elem = iterator.get_next()
+    x = next_elem
+
+    # model
+    # X = tf.placeholder("float", shape=(None, 28, 28), name='X')
+    # Y = tf.placeholder("float", shape=(None, 10), name='Y')
+
+    x1 = tf.reduce_sum(x, axis=1)
+    w = tf.Variable(tf.random_normal(shape=[28, 10]))
+    y = tf.matmul(x1, w)
+
+    with tf.Session() as sess:
+        sess.run(iterator.initializer)
+        sess.run(tf.global_variables_initializer())
+        while True:
+            try:
+                xv = sess.run(x)[0]
+                res = sess.run(y)
+                print(xv.min(), xv.max(), xv.shape)
+                print(res.shape)
+            except tf.errors.OutOfRangeError:
+                break
+
+
 if __name__ == "__main__":
     build_and_train(gpu_config.gpuconfig)
     # predict_and_calc(gpu_config.gpuconfig)
+    # dataset_example()
 
