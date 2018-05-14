@@ -26,13 +26,15 @@ class FutureTickDataset(Dataset):
     China Future Tick Data.
 
     """
-    def __init__(self, backward_window=240, forward_window=60, transform=None):
+    def __init__(self, backward_window=240, forward_window=60, transform=None,
+                 cut_len=0):
         self.dir = 'Data/future'
         self.data_fp = os.path.join(self.dir,
                                     'rb1701_201608-201611_AddFeature_lite.hd5')
         self.mask_fp = os.path.join(self.dir,
                                     'mask_all_lite.hd5')
 
+        self.cut_len = cut_len
         self.transform = transform
 
         # 预测时间跨度
@@ -49,12 +51,23 @@ class FutureTickDataset(Dataset):
 
         self._validate()
 
+        self._cut()
+
         self.df = None
 
         self._preprocess()
 
     def _validate(self):
         assert self._df_raw.shape[0] == 200000
+
+    def _cut(self):
+        if not self.cut_len:
+            return
+
+        if isinstance(self.cut_len, int):
+            self._df_raw = self._df_raw.iloc[: self.cut_len]
+        elif isinstance(self.cut_len, float):
+            self._df_raw = self._df_raw.iloc[: int(len(self._df_raw) * self.cut_len)]
 
     def _preprocess(self):
         # 要使用的自变量
@@ -71,11 +84,14 @@ class FutureTickDataset(Dataset):
         # 目标预测变量
         self._df_raw.loc[:, 'y'] = self._df_raw['mid'].pct_change(self.forward_window).shift(-self.forward_window)
 
-        self.df = self._df_raw.loc[self._mask]
+        self.df = self._df_raw.loc[self._mask].dropna()
 
         # X, Y都是np.ndarray
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
+
+        # TODO
+        self.x = (self.x - self.x.mean(axis=0)) / self.x.std(axis=0)
 
         self.x = self.x.astype(np.float32)
         self.y = self.y.astype(np.float32)

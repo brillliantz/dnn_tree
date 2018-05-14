@@ -21,7 +21,6 @@ import torch.optim as optim
 from my_dataset import FutureTickDataset
 
 
-BATCH_SIZE = 8
 CLASSES = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
@@ -69,6 +68,11 @@ class Net(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
+    def show(self, desc):
+        print("\n\n ", desc)
+        ps = list(self.parameters())
+        print(ps[0][0])
 
 
 def get_cifar_10(show=False):
@@ -130,16 +134,22 @@ def train_model(model,
 
             # forward + backward + optimize
             outputs = model(features)
+
             loss = loss_func(outputs, labels)
             loss.backward()
             optimizer.step()
 
             # print statistics
-            running_loss += loss.item()
+            loss_value = loss.item()
+            running_loss += loss_value
             if i % save_and_eval_interval == (save_and_eval_interval - 1):  # print every 2000 mini-batches
-                print('[%d, %5d] loss: %.3f' %
-                      (epoch + 1, i + 1, running_loss / 2000))
+                print('[%d, %5d] loss: %.3e' %
+                      (epoch + 1, i + 1, running_loss / save_and_eval_interval))
                 running_loss = 0.0
+
+            # DEBUG
+            # model.show(str(i))
+            # DEBUG
 
     print('Finished Training')
 
@@ -160,7 +170,7 @@ def test_model_toy(test_loader, model):
                                   for j in range(4)))
 
 
-def test_model(test_loader, model):
+def test_model_classification(test_loader, model):
     correct = 0
     total = 0
     with torch.no_grad():
@@ -175,6 +185,33 @@ def test_model(test_loader, model):
 
     print('Accuracy of the network on the 10000 test images: %d %%' % (
         100 * correct / total))
+
+
+def model_predict(test_loader, model):
+    y_true_list = []
+    y_pred_list = []
+
+    with torch.no_grad():
+        for features, labels in test_loader:
+            features, labels = features.to(device), labels.to(device)
+
+            outputs = model(features)
+
+            y_true_list.append(labels)
+            y_pred_list.append(outputs)
+
+    y_true = np.concatenate(y_true_list, axis=0)
+    y_pred = np.concatenate(y_pred_list, axis=0)
+
+    return y_true, y_pred
+
+
+def model_score(test_loader, model):
+    y_true, y_pred = model_predict(test_loader, model)
+    from demo_fully_diff_ndf import calc_rsq
+    rsq = calc_rsq(y_true, y_pred)
+
+    return rsq
 
 
 def main():
@@ -197,23 +234,27 @@ def main():
 
 
 def main_future():
-    ds = FutureTickDataset(240, 60)
+    ds = FutureTickDataset(240, 60, cut_len=240*100)
+    ds_len = len(ds)
+    batch_size = 1
+    itr_per_epoch = ds_len // batch_size
+    print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
 
-    trainloader = DataLoader(ds, batch_size=4, shuffle=False,)
+    trainloader = DataLoader(ds, batch_size=batch_size, shuffle=False,)
 
     net = Net(64 * 56, 1, in_channels=8, dim=1)
     net.to(device)
 
     criterion = nn.MSELoss()
-    optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
 
     train_model(model=net,
                 optimizer=optimizer, loss_func=criterion,
-                n_epoch=2, train_loader=trainloader,
-                save_and_eval_interval=2000)
+                n_epoch=3, train_loader=trainloader,
+                save_and_eval_interval=100)
 
-    test_model(trainloader, net)
-    # test_model(testloader, net)
+    rsq = model_score(trainloader, net)
+    print("Rsquared = {:.2f}%".format(rsq * 100))
 
 
 if __name__ == "__main__":
