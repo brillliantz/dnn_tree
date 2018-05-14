@@ -1,5 +1,7 @@
 # encoding: utf-8
 
+import os
+
 import gpu_config_torch
 import torch
 # Assume that we are on a CUDA machine, then this should print a CUDA device:
@@ -20,6 +22,8 @@ import torch.optim as optim
 
 from my_dataset import FutureTickDataset
 from demo_fully_diff_ndf import calc_rsq
+
+SAVE_MODEL_FP = 'torch_saved_models/cnn.model'
 
 
 CLASSES = ('plane', 'car', 'bird', 'cat',
@@ -159,9 +163,9 @@ def train_model(model,
                       (epoch + 1, i + 1, running_loss / save_and_eval_interval))
                 running_loss = 0.0
 
-                score, loss = model_score(train_loader, model, score_func, loss_func)
-                print("Loss = {:.3e}".format(loss.item()))
-                print("Score = {:.3e}".format(score.item()))
+                #score, loss = model_score(train_loader, model, score_func, loss_func)
+                #print("Loss = {:.3e}".format(loss.item()))
+                #print("Score = {:.3e}".format(score.item()))
 
             # DEBUG
             # model.show(str(i))
@@ -256,7 +260,7 @@ def main():
 
 
 def main_future():
-    ds = FutureTickDataset(240, 60, cut_len=240*100)
+    ds = FutureTickDataset(240, 60, cut_len=240*10)
 
     y_abs = np.abs(ds.y)
     print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
@@ -269,6 +273,11 @@ def main_future():
     trainloader = DataLoader(ds, batch_size=batch_size, shuffle=False,)
 
     net = Net(64 * 56, 1, in_channels=8, dim=1)
+
+    if os.path.exists(SAVE_MODEL_FP):
+        net.load_state_dict(torch.load(SAVE_MODEL_FP))
+        print("Load model from {:s}".format(SAVE_MODEL_FP))
+
     net.to(device)
 
     criterion = nn.MSELoss()
@@ -276,12 +285,14 @@ def main_future():
 
     train_model(model=net,
                 optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
-                n_epoch=3, train_loader=trainloader,
-                save_and_eval_interval=1000)
+                n_epoch=1, train_loader=trainloader,
+                save_and_eval_interval=400)
 
-    rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
-    print("Loss = {:.3e}%".format(loss))
-    print("Rsquared = {:.2f}%".format(rsq * 100))
+    torch.save(net.state_dict(), SAVE_MODEL_FP)
+
+    #rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
+    #print("Loss = {:.3e}%".format(loss))
+    #print("Rsquared = {:.2f}%".format(rsq * 100))
 
 
 if __name__ == "__main__":
