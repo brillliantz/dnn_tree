@@ -23,7 +23,7 @@ import torch.optim as optim
 from my_dataset import FutureTickDataset
 from demo_fully_diff_ndf import calc_rsq
 
-SAVE_MODEL_FP = 'torch_saved_models/cnn.model'
+SAVE_MODEL_FP = 'torch_saved_models_240k/cnn.model'
 
 
 CLASSES = ('plane', 'car', 'bird', 'cat',
@@ -38,6 +38,18 @@ def calc_rsq_torch(y, yhat):
     res = torch.add(torch.ones_like(ss_total),
                     torch.neg(torch.div(ss_residue, ss_total)))
     return res
+
+
+def torch_argmax(tensor, dim):
+    _, res = torch.max(tensor, dim)
+    return res
+
+
+def calc_accu_torch(y, yhat):
+    yaht = yhat.data
+    yhat = torch_argmax(yhat, dim=1)
+    accu = (y == yhat).to(device, dtype=torch.float32).mean().item()
+    return accu
 
 
 class Net(nn.Module):
@@ -97,18 +109,13 @@ def get_cifar_10(show=False):
 
     trainset = torchvision.datasets.CIFAR10(root='Data/cifar10', train=True,
                                             download=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
-                                              shuffle=True, num_workers=2)
 
     testset = torchvision.datasets.CIFAR10(root='Data/cifar10', train=False,
                                            download=True, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
-                                             shuffle=False, num_workers=2)
+    #if show:
+        #show_imgs(trainloader, CLASSES)
 
-    if show:
-        show_imgs(trainloader, CLASSES)
-
-    return trainloader, testloader
+    return trainset, testset
 
 
 # functions to show an image
@@ -141,7 +148,8 @@ def train_model(model,
                 save_and_eval_interval=2000):
     for epoch in range(n_epoch):  # loop over the dataset multiple times
         running_loss = 0.0
-        for i, (features, labels) in tqdm(enumerate(train_loader, 0)):
+        # for i, (features, labels) in tqdm(enumerate(train_loader, 0)):
+        for i, (features, labels) in enumerate(train_loader, 0):
             features, labels = features.to(device), labels.to(device)
 
             # zero the parameter gradients
@@ -245,26 +253,32 @@ def model_score(test_loader, model, score_func, loss_func):
 
 
 def main():
-    trainloader, testloader = get_cifar_10(show=False)
+    trainset, testset = get_cifar_10(show=False)
 
-    net = Net(64*4*4, 10, 3)
+    batch_size = 16
+
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+                                              shuffle=True, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                             shuffle=False, num_workers=2)
+
+
+    net = Net(64*4*4, 10, in_channels=3, dim=2)
     net.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
     train_model(model=net,
-                optimizer=optimizer, loss_func=criterion,
-                n_epoch=2, train_loader=trainloader,
-                save_and_eval_interval=2000)
-
-    test_model_toy(testloader, net)
-    test_model(trainloader, net)
-    test_model(testloader, net)
+                optimizer=optimizer, loss_func=criterion, score_func=calc_accu_torch,
+                n_epoch=4, train_loader=trainloader,
+                save_and_eval_interval=200)
+    model_score(trainloader, net, calc_accu_torch, criterion)
+    model_score(testloader, net, calc_accu_torch, criterion)
 
 
 def main_future():
-    ds = FutureTickDataset(240, 60, cut_len=240*100)
+    ds = FutureTickDataset(240, 60, cut_len=240*1000)
 
     y_abs = np.abs(ds.y)
     print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
@@ -279,21 +293,23 @@ def main_future():
     net = Net(64 * 56, 1, in_channels=8, dim=1)
 
     if os.path.exists(SAVE_MODEL_FP):
-        net.load_state_dict(torch.load(SAVE_MODEL_FP, map_location=device.type))
+        net.load_state_dict(torch.load(SAVE_MODEL_FP,
+                                       #map_location=repr(device)
+                                       ))
         print("Load model from {:s}".format(SAVE_MODEL_FP))
 
     net.to(device)
 
     criterion = nn.MSELoss()
 
-    train_mode = 0
+    train_mode = 1
     if train_mode:
         optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
 
         train_model(model=net,
                     optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
-                    n_epoch=10, train_loader=trainloader,
-                    save_and_eval_interval=1000)
+                    n_epoch=100, train_loader=trainloader,
+                    save_and_eval_interval=40)
 
         torch.save(net.state_dict(), SAVE_MODEL_FP)
         print("Model saved.")
@@ -317,5 +333,5 @@ def main_future():
 
 
 if __name__ == "__main__":
-    main_future()
-    # main()
+    # main_future()
+    main()
