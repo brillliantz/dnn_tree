@@ -163,9 +163,13 @@ def train_model(model,
                       (epoch + 1, i + 1, running_loss / save_and_eval_interval))
                 running_loss = 0.0
 
-                #score, loss = model_score(train_loader, model, score_func, loss_func)
-                #print("Loss = {:.3e}".format(loss.item()))
-                #print("Score = {:.3e}".format(score.item()))
+        # after per epoch
+        score, loss = model_score(train_loader, model, score_func, loss_func)
+        print("Loss = {:.3e}".format(loss.item()))
+        print("Score = {:.3e}".format(score.item()))
+        torch.save(model.state_dict(), SAVE_MODEL_FP)
+        print("Model saved.")
+
 
             # DEBUG
             # model.show(str(i))
@@ -260,7 +264,7 @@ def main():
 
 
 def main_future():
-    ds = FutureTickDataset(240, 60, cut_len=240*10)
+    ds = FutureTickDataset(240, 60, cut_len=240*100)
 
     y_abs = np.abs(ds.y)
     print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
@@ -285,10 +289,11 @@ def main_future():
 
     train_model(model=net,
                 optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
-                n_epoch=1, train_loader=trainloader,
-                save_and_eval_interval=400)
+                n_epoch=10, train_loader=trainloader,
+                save_and_eval_interval=1000)
 
     torch.save(net.state_dict(), SAVE_MODEL_FP)
+    print("Model saved.")
 
     #rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
     #print("Loss = {:.3e}%".format(loss))
