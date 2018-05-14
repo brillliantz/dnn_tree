@@ -229,15 +229,50 @@ def load_data():
     return X, Y
 
 
-if __name__ == "__main__":
-    # test
+def generate_lite_data():
+    store = pd.HDFStore(os.path.join(DATA_PATH,
+                                     'rb1701_201608-201611_AddFeature.hd5'),
+                        mode='r')
+    dataset = store['dataset']
+    store.close()
+
+    store = pd.HDFStore(os.path.join(DATA_PATH,
+                                     'mask_all.hd5'),
+                        mode='r')
+    mask_all= store['mask_all']
+    store.close()
+
+    assert dataset.shape[0] == 3245785
+
+    LEN = 200000
+    dataset = dataset.iloc[: LEN]
+    mask_all = mask_all.iloc[: LEN]
+
+    store = pd.HDFStore(os.path.join(DATA_PATH,
+                                     'rb1701_201608-201611_AddFeature_lite.hd5'),
+                        mode='w', complevel=8)
+    store['dataset'] = dataset
+    store.close()
+
+    store = pd.HDFStore(os.path.join(DATA_PATH,
+                                     'mask_all_lite.hd5'),
+                        mode='w', complevel=8)
+    store['mask_all'] = mask_all
+    store.close()
+
+
+def test_load_all():
     import time
     t0 = time.time()
 
     x, y = load_data()
+
 
     t1 = time.time()
 
     print(x.shape, y.shape)
     print("Time to load data: {:.1f} sec.".format(t1 - t0))
 
+
+if __name__ == "__main__":
+    generate_lite_data()
