@@ -51,7 +51,7 @@ def calc_accu_tf(y, yhat):
     y = tf.argmax(y, axis=1)
     yhat = tf.argmax(yhat, axis=1)
 
-    accuracy = tf.reduce_mean(tf.equal(y, yhat))
+    accuracy = tf.reduce_mean(tf.cast(tf.equal(y, yhat), tf.float32))
     return accuracy
 
 
@@ -258,6 +258,7 @@ def run_train(sess,
               save_and_eval_interval=100,
               eval_ops=None,
               saver_dir='saved_model',
+              iter_initializers=None
               ):
     """
 
@@ -288,6 +289,8 @@ def run_train(sess,
 
     if eval_ops is None:
         eval_ops = dict()
+    if iter_initializers is None:
+        iter_initializers = []
 
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=4)
 
@@ -296,6 +299,8 @@ def run_train(sess,
         saver.restore(sess, ckpt_fp)
     else:
         sess.run(tf.global_variables_initializer())
+        for i in iter_initializers:
+            sess.run(i)
 
     # iter_per_epoch = train_len // batch_size
     # epoch_trained = tf.train.global_step(sess, global_step_tensor) // iter_per_epoch
@@ -455,7 +460,8 @@ def build_and_train(sess_config):
     # data
     from data_vendor import DataMNIST_new
     vendor = DataMNIST_new()
-    ds_train, ds_test, input_shape_without_batch, n_classes = vendor.get_data()
+    (ds_x_train, ds_x_test, ds_y_train, ds_y_test,
+     input_shape_without_batch, n_classes) = vendor.get_data()
 
     # hyper-parameters
     batch_size = 110
@@ -464,12 +470,17 @@ def build_and_train(sess_config):
     n_channel = 1
 
     # Dataset Iterator
-    ds_train = ds_train.batch(batch_size)
-    ds_test = ds_test.repeat().batch(10000)
-    itr_train = ds_train.make_initializable_iterator()
-    itr_test = ds_test.make_initializable_iterator()
-    X, Y = itr_train.get_next()
-    x_test, y_test = itr_test.get_next()
+    ds_x_train = ds_x_train.batch(batch_size)
+    ds_y_train = ds_y_train.batch(batch_size)
+    ds_x_test = ds_x_test.repeat().batch(10000)
+    ds_y_test = ds_y_test.repeat().batch(10000)
+    itr_x_train = ds_x_train.make_initializable_iterator()
+    itr_x_test = ds_x_test.make_initializable_iterator()
+    itr_y_train = ds_y_train.make_initializable_iterator()
+    itr_y_test = ds_y_test.make_initializable_iterator()
+    X = itr_x_train.get_next()
+    Y = itr_y_train.get_next()
+    x_test, y_test = itr_x_test.get_next(), itr_y_test.get_next()
 
     # Create a Graph and set as default
     g = tf.get_default_graph()  # tf.Graph()
@@ -478,7 +489,7 @@ def build_and_train(sess_config):
     # X = tf.placeholder("float", shape=input_shape, name='X')
     # Y = tf.placeholder("float", shape=output_shape, name='Y')
 
-    global_step = tf.Variable(0, name='global_step', trainable=False)
+    global_step = tf.Variable(tf.constant(0), name='global_step', trainable=False)
     g.add_to_collection('global_step', global_step)
 
     # model
@@ -505,18 +516,21 @@ def build_and_train(sess_config):
 
     # try to restore
     sess = tf.Session(graph=g, config=sess_config)
-    sess.run(itr_train.initializer)
-    sess.run(itr_test.initializer)
     run_train(sess,
               batch_size=batch_size, n_epoch=100,
               fetches=[train_op],
-              merged_summary=tf.summary.merge_all(),
+              # merged_summary=tf.summary.merge_all(),
               writer_dir=SAVE_DIR,
               global_step_tensor=global_step,
               save_and_eval_interval=100,
               eval_ops={'train rsq': train_score_op,
                         'test rsq' : test_score_op},
               saver_dir=SAVE_DIR,
+              iter_initializers=[itr_x_train.initializer,
+                                 itr_x_test.initializer,
+                                 itr_y_train.initializer,
+                                 itr_y_test.initializer],
+
               )
 
 

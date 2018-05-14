@@ -69,9 +69,11 @@ class DataMNIST_new(DataVendor):
         y_train = y_train.astype(np.float32)
         y_test = y_test.astype(np.float32)
 
-        ds_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-        ds_test = tf.data.Dataset.from_tensor_slices((x_test, y_test))
-        return ds_train, ds_test, self.input_shape_without_batch, self.n_classes
+        ds_x_train = tf.data.Dataset.from_tensor_slices(x_train)
+        ds_x_test = tf.data.Dataset.from_tensor_slices(x_test)
+        ds_y_train = tf.data.Dataset.from_tensor_slices(y_train)
+        ds_y_test = tf.data.Dataset.from_tensor_slices(y_test)
+        return ds_x_train, ds_x_test, ds_y_train, ds_y_test, self.input_shape_without_batch, self.n_classes
 
     def prepare_data(self):
         # If use cnn: Given an input tensor of shape `[batch, in_height, in_width, in_channels]`

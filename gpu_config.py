@@ -1,6 +1,6 @@
 # use limited GPU resources
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 import tensorflow as tf
 gpuconfig = tf.ConfigProto()
