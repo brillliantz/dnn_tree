@@ -92,6 +92,7 @@ class FutureTickDataset(Dataset):
 
         # TODO
         self.x = (self.x - self.x.mean(axis=0)) / self.x.std(axis=0)
+        self.y = (self.y - self.y.mean(axis=0)) / self.y.std(axis=0)
 
         self.x = self.x.astype(np.float32)
         self.y = self.y.astype(np.float32)
