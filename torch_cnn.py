@@ -279,25 +279,41 @@ def main_future():
     net = Net(64 * 56, 1, in_channels=8, dim=1)
 
     if os.path.exists(SAVE_MODEL_FP):
-        net.load_state_dict(torch.load(SAVE_MODEL_FP))
+        net.load_state_dict(torch.load(SAVE_MODEL_FP, map_location=device.type))
         print("Load model from {:s}".format(SAVE_MODEL_FP))
 
     net.to(device)
 
     criterion = nn.MSELoss()
-    optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
 
-    train_model(model=net,
-                optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
-                n_epoch=10, train_loader=trainloader,
-                save_and_eval_interval=1000)
+    train_mode = 0
+    if train_mode:
+        optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
 
-    torch.save(net.state_dict(), SAVE_MODEL_FP)
-    print("Model saved.")
+        train_model(model=net,
+                    optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
+                    n_epoch=10, train_loader=trainloader,
+                    save_and_eval_interval=1000)
 
-    #rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
-    #print("Loss = {:.3e}%".format(loss))
-    #print("Rsquared = {:.2f}%".format(rsq * 100))
+        torch.save(net.state_dict(), SAVE_MODEL_FP)
+        print("Model saved.")
+
+        #rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
+        #print("Loss = {:.3e}%".format(loss))
+        #print("Rsquared = {:.2f}%".format(rsq * 100))
+    else:
+        y_true, y_pred = model_predict(trainloader, net)
+        score = calc_rsq_torch(y_true, y_pred)
+        loss = criterion(y_true, y_pred)
+        print("Loss = {:.3e}".format(loss.item()))
+        print("Score = {:.3e}".format(score.item()))
+
+        y = y_true.numpy().squeeze()
+        yhat = y_pred.numpy().squeeze()
+        np.save('ytrue.npz', y)
+        np.save('ypred.npz', yhat)
+
+        y_true, y_pred = model_predict(trainloader, net)
 
 
 if __name__ == "__main__":
