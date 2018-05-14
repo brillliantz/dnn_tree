@@ -19,10 +19,21 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from my_dataset import FutureTickDataset
+from demo_fully_diff_ndf import calc_rsq
 
 
 CLASSES = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+
+def calc_rsq_torch(y, yhat):
+    residue = torch.add(y, torch.neg(yhat))
+    ss_residue = torch.mean(torch.pow(residue, 2), dim=0)
+    y_mean = torch.mean(y, dim=0)
+    ss_total = torch.mean(torch.pow(torch.add(y, torch.neg(y_mean)), 2), dim=0)
+    res = torch.add(torch.ones_like(ss_total),
+                    torch.neg(torch.div(ss_residue, ss_total)))
+    return res
 
 
 class Net(nn.Module):
@@ -121,7 +132,7 @@ def show_imgs(data_loader, classes):
 
 
 def train_model(model,
-                optimizer, loss_func,
+                optimizer, loss_func, score_func,
                 n_epoch, train_loader,
                 save_and_eval_interval=2000):
     for epoch in range(n_epoch):  # loop over the dataset multiple times
@@ -141,11 +152,16 @@ def train_model(model,
 
             # print statistics
             loss_value = loss.item()
+            # loss_value = ((labels.numpy() - outputs.detach().numpy())**2).mean()
             running_loss += loss_value
             if i % save_and_eval_interval == (save_and_eval_interval - 1):  # print every 2000 mini-batches
                 print('[%d, %5d] loss: %.3e' %
                       (epoch + 1, i + 1, running_loss / save_and_eval_interval))
                 running_loss = 0.0
+
+                score, loss = model_score(train_loader, model, score_func, loss_func)
+                print("Loss = {:.3e}".format(loss.item()))
+                print("Score = {:.3e}".format(score.item()))
 
             # DEBUG
             # model.show(str(i))
@@ -187,7 +203,7 @@ def test_model_classification(test_loader, model):
         100 * correct / total))
 
 
-def model_predict(test_loader, model):
+def model_predict(test_loader, model, out_tensor=True):
     y_true_list = []
     y_pred_list = []
 
@@ -197,21 +213,27 @@ def model_predict(test_loader, model):
 
             outputs = model(features)
 
+            # outputs = outputs.numpy()
+            # labels = labels.numpy()
             y_true_list.append(labels)
             y_pred_list.append(outputs)
 
-    y_true = np.concatenate(y_true_list, axis=0)
-    y_pred = np.concatenate(y_pred_list, axis=0)
+    y_true = torch.cat(y_true_list, dim=0)
+    y_pred = torch.cat(y_pred_list, dim=0)
+
+    if not out_tensor:
+        y_true = y_true.numpy()
+        y_pred = y_pred.numpy()
 
     return y_true, y_pred
 
 
-def model_score(test_loader, model):
+def model_score(test_loader, model, score_func, loss_func):
     y_true, y_pred = model_predict(test_loader, model)
-    from demo_fully_diff_ndf import calc_rsq
-    rsq = calc_rsq(y_true, y_pred)
+    score = score_func(y_true, y_pred)
+    loss = loss_func(y_true, y_pred)
 
-    return rsq
+    return score, loss
 
 
 def main():
@@ -235,6 +257,10 @@ def main():
 
 def main_future():
     ds = FutureTickDataset(240, 60, cut_len=240*100)
+
+    y_abs = np.abs(ds.y)
+    print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
+
     ds_len = len(ds)
     batch_size = 1
     itr_per_epoch = ds_len // batch_size
@@ -249,11 +275,12 @@ def main_future():
     optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
 
     train_model(model=net,
-                optimizer=optimizer, loss_func=criterion,
+                optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
                 n_epoch=3, train_loader=trainloader,
-                save_and_eval_interval=100)
+                save_and_eval_interval=1000)
 
-    rsq = model_score(trainloader, net)
+    rsq, loss = model_score(trainloader, net, calc_rsq_torch, criterion)
+    print("Loss = {:.3e}%".format(loss))
     print("Rsquared = {:.2f}%".format(rsq * 100))
 
 
