@@ -27,12 +27,19 @@ class FutureTickDataset(Dataset):
 
     """
     def __init__(self, backward_window=240, forward_window=60, transform=None,
-                 cut_len=0):
+                 cut_len=0, lite_version=True):
         self.dir = 'Data/future'
-        self.data_fp = os.path.join(self.dir,
-                                    'rb1701_201608-201611_AddFeature_lite.hd5')
-        self.mask_fp = os.path.join(self.dir,
-                                    'mask_all_lite.hd5')
+        if lite_version:
+            self.data_fp = os.path.join(self.dir,
+                                        'rb1701_201608-201611_AddFeature_lite.hd5')
+            self.mask_fp = os.path.join(self.dir,
+                                        'mask_all_lite.hd5')
+        else:
+            self.data_fp = os.path.join(self.dir,
+                                        'rb1701_201608-201611_AddFeature.hd5')
+            self.mask_fp = os.path.join(self.dir,
+                                        'mask_all.hd5')
+
 
         self.cut_len = cut_len
         self.transform = transform
@@ -58,7 +65,9 @@ class FutureTickDataset(Dataset):
         self._preprocess()
 
     def _validate(self):
-        assert self._df_raw.shape[0] == 200000
+        #assert self._df_raw.shape[0] == 200000
+        #assert dataset.shape[0] == 3245785
+        pass
 
     def _cut(self):
         if not self.cut_len:
@@ -127,11 +136,12 @@ def test_dataset_for_loop():
 
 
 def test_dataset_loader():
-    ds = FutureTickDataset(240, 60)
+    ds = FutureTickDataset(240, 60, lite_version=False)
 
     loader = DataLoader(ds, batch_size=4, shuffle=False,)
 
-    for i_batch, (x_batched, y_batched) in enumerate(loader):
+    from tqdm import tqdm
+    for i_batch, (x_batched, y_batched) in tqdm(enumerate(loader)):
         pass
         # print(i_batch)
 
