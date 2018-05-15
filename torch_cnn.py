@@ -23,7 +23,7 @@ import torch.optim as optim
 from my_dataset import FutureTickDataset
 from demo_fully_diff_ndf import calc_rsq
 
-SAVE_MODEL_FP = 'torch_saved_models_240k/cnn.model'
+SAVE_MODEL_FP = 'saved_torch_models_3mil/cnn.model'
 
 
 CLASSES = ('plane', 'car', 'bird', 'cat',
@@ -46,9 +46,9 @@ def torch_argmax(tensor, dim):
 
 
 def calc_accu_torch(y, yhat):
-    yaht = yhat.data
+    yhat = yhat.data
     yhat = torch_argmax(yhat, dim=1)
-    accu = (y == yhat).to(device, dtype=torch.float32).mean().item()
+    accu = (y == yhat).to(device, dtype=torch.float32).mean()
     return accu
 
 
@@ -144,7 +144,7 @@ def show_imgs(data_loader, classes):
 
 def train_model(model,
                 optimizer, loss_func, score_func,
-                n_epoch, train_loader,
+                n_epoch, train_loader, test_loader,
                 save_and_eval_interval=2000):
     for epoch in range(n_epoch):  # loop over the dataset multiple times
         running_loss = 0.0
@@ -172,9 +172,9 @@ def train_model(model,
                 running_loss = 0.0
 
         # after per epoch
-        score, loss = model_score(train_loader, model, score_func, loss_func)
-        print("Loss = {:.3e}".format(loss.item()))
-        print("Score = {:.3e}".format(score.item()))
+        score, loss = model_score(test_loader, model, score_func, loss_func)
+        print("Loss = {:+4.6f}".format(loss.item()))
+        print("Score = {:+4.6f}".format(score.item()))
         torch.save(model.state_dict(), SAVE_MODEL_FP)
         print("Model saved.")
 
@@ -247,7 +247,7 @@ def model_predict(test_loader, model, out_tensor=True):
 def model_score(test_loader, model, score_func, loss_func):
     y_true, y_pred = model_predict(test_loader, model)
     score = score_func(y_true, y_pred)
-    loss = loss_func(y_true, y_pred)
+    loss = loss_func(y_pred, y_true)
 
     return score, loss
 
@@ -271,24 +271,28 @@ def main():
 
     train_model(model=net,
                 optimizer=optimizer, loss_func=criterion, score_func=calc_accu_torch,
-                n_epoch=4, train_loader=trainloader,
+                n_epoch=100, train_loader=trainloader, test_loader=testloader,
                 save_and_eval_interval=200)
-    model_score(trainloader, net, calc_accu_torch, criterion)
-    model_score(testloader, net, calc_accu_torch, criterion)
+    #model_score(trainloader, net, calc_accu_torch, criterion)
+    #model_score(testloader, net, calc_accu_torch, criterion)
 
 
 def main_future():
-    ds = FutureTickDataset(240, 60, cut_len=240*1000)
+    ds = FutureTickDataset(240, 60, cut_len=None, lite_version=False)
+    ds_test = FutureTickDataset(240, 60, cut_len=None)
+    print("Train dataset len: {:d}\n"
+          "Test dataset len: {:d}".format(len(ds), len(ds_test)))
 
     y_abs = np.abs(ds.y)
     print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
 
     ds_len = len(ds)
-    batch_size = 1
+    batch_size = 20
     itr_per_epoch = ds_len // batch_size
     print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
 
     trainloader = DataLoader(ds, batch_size=batch_size, shuffle=False,)
+    testloader = DataLoader(ds_test, batch_size=batch_size, shuffle=False,)
 
     net = Net(64 * 56, 1, in_channels=8, dim=1)
 
@@ -304,12 +308,12 @@ def main_future():
 
     train_mode = 1
     if train_mode:
-        optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.0)
+        optimizer = optim.SGD(net.parameters(), lr=0.00001, momentum=0.9)
 
         train_model(model=net,
                     optimizer=optimizer, loss_func=criterion, score_func=calc_rsq_torch,
-                    n_epoch=100, train_loader=trainloader,
-                    save_and_eval_interval=40)
+                    n_epoch=100, train_loader=trainloader, test_loader=testloader,
+                    save_and_eval_interval=6000)
 
         torch.save(net.state_dict(), SAVE_MODEL_FP)
         print("Model saved.")
@@ -333,5 +337,5 @@ def main_future():
 
 
 if __name__ == "__main__":
-    # main_future()
-    main()
+    main_future()
+    # main()
