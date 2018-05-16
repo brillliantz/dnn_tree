@@ -5,3 +5,5 @@ Data/*
 Reference/*
 
 ndf_logs/*
+
+saved_torch_models/*
