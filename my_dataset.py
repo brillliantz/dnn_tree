@@ -1,24 +1,13 @@
 # encoding: utf-8
 
-import torch
-import torchvision
-from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader
 import os
+
 import pandas as pd
 import numpy as np
-
-
-class ToTensor(object):
-    """Convert ndarrays in sample to Tensors."""
-
-    def __call__(self, sample):
-        x, y = sample
-
-        # swap color axis because
-        # numpy image: H x W x C
-        # torch image: C X H X W
-        return torch.from_numpy(x), torch.from_numpy(y)
+import torch
+import torchvision
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, datasets
 
 
 class FutureTickDataset(Dataset):
@@ -124,8 +113,27 @@ class FutureTickDataset(Dataset):
         return sample_x, sample_y
 
 
+def get_future_loader(batch_size, cut_len, lite_version=True):
+    ds = FutureTickDataset(240, 60, cut_len=cut_len, lite_version=lite_version)
+    ds_test = FutureTickDataset(240, 60, cut_len=cut_len)
+    print("Train dataset len: {:d}\n"
+          "Test dataset len: {:d}".format(len(ds), len(ds_test)))
+
+    y_abs = np.abs(ds.y)
+    print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
+
+    ds_len = len(ds)
+    itr_per_epoch = ds_len // batch_size
+    print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
+
+    trainloader = DataLoader(ds, batch_size=batch_size, shuffle=False,)
+    testloader = DataLoader(ds_test, batch_size=batch_size, shuffle=False,)
+
+    return trainloader, testloader
+
+
 def test_dataset_for_loop():
-    composed = torchvision.transforms.Compose([ToTensor()])
+    composed = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
     ds = FutureTickDataset(240, 60,
                            transform=composed
                            )
@@ -146,19 +154,63 @@ def test_dataset_loader():
         # print(i_batch)
 
 
+def get_cifar_10(batch_size, shuffle, num_workers=1):
+    transform = transforms.Compose(
+        [transforms.Resize(224),
+         transforms.ToTensor(),
+         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-def time_it(func, *args, **kwargs):
-    import time
-    t0 = time.time()
-    func(*args, **kwargs)
-    t1 = time.time()
+    trainset = torchvision.datasets.CIFAR10(root='Data/cifar10', train=True,
+                                            download=True, transform=transform)
 
-    t = t1 - t0
-    print("Time elapsed: {:.2f} seconds.".format(t))
+    testset = torchvision.datasets.CIFAR10(root='Data/cifar10', train=False,
+                                           download=True, transform=transform)
+    #if show:
+    #show_imgs(trainloader, CLASSES)
+
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+                                              shuffle=shuffle, num_workers=num_workers)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                             shuffle=False, num_workers=num_workers)
+    return trainloader, testloader
+
+
+def load_imagenet(data_dir, batch_size, n_workers):
+    traindir = os.path.join(data_dir, 'train')
+    valdir = os.path.join(data_dir, 'val')
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ]))
+
+    train_sampler = None
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
+        num_workers=n_workers, pin_memory=True, sampler=train_sampler)
+
+    val_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(valdir, transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ])),
+        batch_size=batch_size, shuffle=False,
+        num_workers=n_workers, pin_memory=True)
+
+    return train_loader, val_loader
 
 
 if __name__ == "__main__":
     # test_dataset_for_loop()
+    from utils import time_it
     time_it(
         #test_dataset_for_loop
         test_dataset_loader
