@@ -77,7 +77,7 @@ def get_shortcut_operation(in_planes, out_planes, stride, expansion, dim):
                 ConvXd(in_planes, out_planes * expansion,
                        kernel_size=1, stride=stride, bias=False,
                        dim=dim),
-                nn.BatchNorm2d(out_planes * expansion),
+                BatchNormXd(out_planes * expansion),
         )
     else:
         def res(x):
@@ -341,7 +341,8 @@ class ResNet(nn.Module):
             num_planes = [base_planes * exp_base**i for i in range(4)]
             self.conv0 = ConvXd(self.in_planes, num_planes[0],
                                 kernel_size=7, stride=2, padding=3,
-                                bias=False)
+                                bias=False,
+                                dim=dim)
             self.bn0 = BatchNormXd(num_planes[0])
             self.relu0 = nn.ReLU(inplace=True)  # size/2
             self.maxpool0 = MaxPoolXd(kernel_size=3, stride=2, padding=1, dim=dim)  # size/2
@@ -353,7 +354,8 @@ class ResNet(nn.Module):
             num_planes = [base_planes * math.pow(exp_base, i) for i in range(4)]
             self.conv0 = ConvXd(self.in_planes, num_planes[0],
                                 kernel_size=3, stride=1, padding=1,
-                                bias=False)
+                                bias=False,
+                                dim=dim)
             self.bn0 = BatchNormXd(num_planes[0])
             self.relu0 = nn.ReLU(inplace=True)  # size/2
             
@@ -362,6 +364,7 @@ class ResNet(nn.Module):
             raise NotImplementedError("mode = {:s}".format(mode))
 
         self._ip = num_planes[0]
+        self.dim = dim
         
         self.layer1 = self._make_layer(block_cls, num_planes[0], num_blocks[0])
         self.layer2 = self._make_layer(block_cls, num_planes[1], num_blocks[1], stride=exp_base)  # size/2
@@ -396,10 +399,10 @@ class ResNet(nn.Module):
             return nn.Sequential()
         
         layers = list()
-        layers.append(block_cls(self._ip, out_planes, stride))
+        layers.append(block_cls(self._ip, out_planes, stride, dim=self.dim))
         self._ip = out_planes * block_cls.expansion
         for i in range(1, n_blocks):
-            layers.append(block_cls(self._ip, out_planes))
+            layers.append(block_cls(self._ip, out_planes, dim=self.dim))
 
         return nn.Sequential(*layers)
 
