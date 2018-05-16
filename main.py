@@ -37,13 +37,13 @@ def create_arg_parser():
     '''
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=100, type=int, metavar='N',
+    parser.add_argument('--epochs', default=1000, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('-b', '--batch-size', default=16, type=int,
                         metavar='N', help='mini-batch size (default: 64)')
-    parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
                         metavar='LR', help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
@@ -71,6 +71,39 @@ def create_arg_parser():
     return parser
 
 
+def model_predict(test_loader, model, out_numpy=False):
+    y_true_list = []
+    y_pred_list = []
+    
+    with torch.no_grad():
+        for features, labels in test_loader:
+            features, labels = features.to(args.device), labels.to(args.device)
+            
+            outputs = model(features)
+            
+            # outputs = outputs.numpy()
+            # labels = labels.numpy()
+            y_true_list.append(labels)
+            y_pred_list.append(outputs)
+    
+    y_true = torch.cat(y_true_list, dim=0)
+    y_pred = torch.cat(y_pred_list, dim=0)
+    
+    if out_numpy:
+        y_true = y_true.numpy()
+        y_pred = y_pred.numpy()
+    
+    return y_true, y_pred
+
+
+def model_score(test_loader, model, score_func, loss_func):
+    y_true, y_pred = model_predict(test_loader, model)
+    score = score_func(y_true, y_pred)
+    loss = loss_func(y_pred, y_true)
+    
+    return score, loss
+
+
 def main():
     global args, best_prec1
     parser = create_arg_parser()
@@ -93,10 +126,10 @@ def main():
         print("=> creating model '{}'".format(args.arch))
         # model = models.__dict__[args.arch](num_classes=10)
         from model.resnet import resnet18
-        model = resnet18(dim=2,
+        model = resnet18(dim=1,
                          pretrained=False,
-                         in_planes=3,
-                         num_classes=10,)
+                         in_planes=8,
+                         num_classes=1,)
         # from model import Net
         # model = Net(64 * 56, 1, in_channels=8, dim=1)
         # from resnet import resnet18
@@ -112,13 +145,16 @@ def main():
         model.to(args.device)
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss()  # .cuda()
-    # criterion = nn.MSELoss()
+    # criterion = nn.CrossEntropyLoss()  # .cuda()
+    criterion = nn.MSELoss()
     criterion.to(args.device)
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    # optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(),
+                                 args.lr, betas=(0.9, 0.999), eps=1e-8,
+                                 weight_decay=0)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -137,31 +173,37 @@ def main():
     cudnn.benchmark = True
 
     # Load dataset & dataloader
-    # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
+    # DEBUG
+    args.batch_size = 100
+    args.print_freq = 10
     print("=> use batch_size {:d}".format(args.batch_size))
-    # from my_dataset import get_future_loader
-    # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=600, lite_version=True)
-    from my_dataset import get_cifar_10
-    train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    from my_dataset import get_future_loader
+    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=40000, lite_version=True)
+    # from my_dataset import get_cifar_10
+    # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     # from my_dataset import get_future_bar_classification_data
     # train_loader, val_loader = get_future_bar_classification_data(batch_size=args.batch_size, cut_len=0)
+    # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
 
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
 
     for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch)
+        # adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        # prec1 = validate(val_loader, model, criterion)
+        score, loss = model_score(val_loader, model, utils.calc_rsq, criterion)
+        print("Val_loss = {:+4.6f}".format(loss.item()))
+        print("Val_score = {:+4.6f}".format(score.item()))
 
         # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
+        is_best = score > best_prec1
+        best_prec1 = max(score, best_prec1)
         save_checkpoint({'epoch': epoch,
                          'arch': args.arch,
                          'state_dict': model.state_dict(),
@@ -195,8 +237,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        prec1, prec5 = utils.calc_topk_accu(output, target, topk=(5, 10))
-        # prec1, prec5 = [0.95], [0.98]
+        # prec1, prec5 = utils.calc_topk_accu(output, target, topk=(5, 10))
+        prec1, prec5 = [0.95], [0.98]
         losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
         top5.update(prec5[0], input.size(0))
@@ -215,8 +257,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                  #'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                  #'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'
+                  ''.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=top1, top5=top5))
 
@@ -247,8 +290,8 @@ def validate(val_loader, model, criterion):
             #y_pred_list.append(utils.argmax(output, dim=1))
 
             # measure accuracy and record loss
-            prec1, prec5 = utils.calc_topk_accu(output, target, topk=(1, 5))
-            # prec1, prec5 = [0.95], [0.98]
+            # prec1, prec5 = utils.calc_topk_accu(output, target, topk=(1, 5))
+            prec1, prec5 = [0.95], [0.98]
             losses.update(loss.item(), input.size(0))
             top1.update(prec1[0], input.size(0))
             top5.update(prec5[0], input.size(0))
