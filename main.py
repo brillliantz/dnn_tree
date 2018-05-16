@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
+# import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
@@ -17,10 +17,11 @@ import utils
 import gpu_config_torch
 
 model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+                     if name.islower() and not name.startswith("__")
+                     and callable(models.__dict__[name]))
 
 SAVE_MODEL_FP = 'saved_torch_models/resnet/model.pytorch'
+best_prec1 = 0
 
 
 def create_arg_parser():
@@ -32,42 +33,42 @@ def create_arg_parser():
                         help='model architecture: ' +
                             ' | '.join(model_names) +
                             ' (default: resnet18)')
+    '''
+    '''
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
+    parser.add_argument('--epochs', default=100, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=64, type=int,
+    parser.add_argument('-b', '--batch-size', default=16, type=int,
                         metavar='N', help='mini-batch size (default: 64)')
-    parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+    parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                         metavar='LR', help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
     parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
-    parser.add_argument('--print-freq', '-p', default=20, type=int,
+    parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 20)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
+    parser.add_argument('--gpu',  action='store_true', default=True,
+                        help='Enable CUDA')
+    '''
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
     parser.add_argument('--world-size', default=1, type=int,
                         help='number of distributed processes')
-    parser.add_argument('--gpu',  action='store_true', default=True,
-                        help='Enable CUDA')
-    """
     parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
                         help='url used to set up distributed training')
     parser.add_argument('--dist-backend', default='gloo', type=str,
                         help='distributed backend')
-    """
+    '''
 
     return parser
-
-best_prec1 = 0
 
 
 def main():
@@ -85,14 +86,21 @@ def main():
     print("=> use device: ", args.device)
 
     # create model instance
-    if args.pretrained:
+    if False:  # args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
         print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        # model = models.__dict__[args.arch](num_classes=10)
+        from model.resnet import resnet18
+        model = resnet18(dim=2,
+                         pretrained=False,
+                         in_planes=3,
+                         num_classes=10,)
         # from model import Net
         # model = Net(64 * 56, 1, in_channels=8, dim=1)
+        # from resnet import resnet18
+        # model = resnet18(num_classes=1, in_channels=8)
 
     if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
         model.features = torch.nn.DataParallel(model.features)
@@ -130,11 +138,13 @@ def main():
 
     # Load dataset & dataloader
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
+    print("=> use batch_size {:d}".format(args.batch_size))
     # from my_dataset import get_future_loader
-    # train_loader, val_loader = get_future_loader(10, cut_len=2000, lite_version=True)
+    # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=600, lite_version=True)
     from my_dataset import get_cifar_10
-    train_loader, val_loader = get_cifar_10(batch_size=args.batch_size,
-                                            shuffle=True, num_workers=args.workers)
+    train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    # from my_dataset import get_future_bar_classification_data
+    # train_loader, val_loader = get_future_bar_classification_data(batch_size=args.batch_size, cut_len=0)
 
     if args.evaluate:
         validate(val_loader, model, criterion)
@@ -185,7 +195,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        prec1, prec5 = accuracy(output, target, topk=(1, 5))
+        prec1, prec5 = utils.calc_topk_accu(output, target, topk=(5, 10))
         # prec1, prec5 = [0.95], [0.98]
         losses.update(loss.item(), input.size(0))
         top1.update(prec1[0], input.size(0))
@@ -221,6 +231,9 @@ def validate(val_loader, model, criterion):
     model.eval()
 
     with torch.no_grad():
+        y_true_list = []
+        y_pred_list = []
+
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
             # target = target.cuda(non_blocking=True)
@@ -230,8 +243,11 @@ def validate(val_loader, model, criterion):
             output = model(input)
             loss = criterion(output, target)
 
+            #y_true_list.append(target)
+            #y_pred_list.append(utils.argmax(output, dim=1))
+
             # measure accuracy and record loss
-            prec1, prec5 = accuracy(output, target, topk=(1, 5))
+            prec1, prec5 = utils.calc_topk_accu(output, target, topk=(1, 5))
             # prec1, prec5 = [0.95], [0.98]
             losses.update(loss.item(), input.size(0))
             top1.update(prec1[0], input.size(0))
@@ -252,6 +268,11 @@ def validate(val_loader, model, criterion):
 
         print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
+
+        #y_true = torch.cat(y_true_list, dim=0)
+        #y_pred = torch.cat(y_pred_list, dim=0)
+        #accu = utils.calc_accu(y_true, y_pred, argmax=False)
+        #print("Validation whole accuracy: {:.5f}".format(accu))
 
     return top1.avg
 
@@ -289,26 +310,12 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    # lr = args.lr * (0.1 ** (epoch // 12))
     lr = args.lr * (0.1 ** (epoch // 30))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
+    print("=> learning rate adjusted as {:.3e}".format(lr))
 
 
 if __name__ == '__main__':

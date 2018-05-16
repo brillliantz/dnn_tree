@@ -4,7 +4,8 @@ import numpy as np
 import torch
 from fileio import create_dir
 
-__all__ = ['calc_rsq', 'calc_accu', 'argmax', 'time_it', 'create_dir']
+__all__ = ['calc_rsq', 'calc_accu', 'calc_topk_accu',
+           'argmax', 'time_it', 'create_dir']
 
 
 def calc_rsq(y, yhat):
@@ -29,6 +30,25 @@ def calc_accu(y, yhat, argmax=True):
     eq = torch.eq(y, yhat)
     accuracy = torch.mean(torch.tensor(eq, dtype=torch.float32))
     return accuracy
+
+
+def calc_topk_accu(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+        
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        
+        res = []
+        for k in topk:
+            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+
 
 
 def time_it(func, *args, **kwargs):
