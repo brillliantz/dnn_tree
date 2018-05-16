@@ -14,7 +14,7 @@ import torch.utils.data.distributed
 import torchvision.models as models
 
 import utils
-from gpu_config_torch import *
+import gpu_config_torch
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -25,8 +25,7 @@ SAVE_MODEL_FP = 'saved_torch_models/resnet/model.pytorch'
 
 def create_arg_parser():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    parser.add_argument('--data', metavar='DIR',
-                        default='Data/cifar10',
+    parser.add_argument('--data', metavar='DIR', default='Data/cifar10',
                         help='path to dataset')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                         choices=model_names,
@@ -39,16 +38,16 @@ def create_arg_parser():
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
-                        metavar='N', help='mini-batch size (default: 256)')
+    parser.add_argument('-b', '--batch-size', default=64, type=int,
+                        metavar='N', help='mini-batch size (default: 64)')
     parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                         metavar='LR', help='initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
     parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
-    parser.add_argument('--print-freq', '-p', default=10, type=int,
-                        metavar='N', help='print frequency (default: 10)')
+    parser.add_argument('--print-freq', '-p', default=20, type=int,
+                        metavar='N', help='print frequency (default: 20)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -57,12 +56,14 @@ def create_arg_parser():
                         help='use pre-trained model')
     parser.add_argument('--world-size', default=1, type=int,
                         help='number of distributed processes')
+    parser.add_argument('--gpu',  action='store_true', default=True,
+                        help='Enable CUDA')
+    """
     parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
                         help='url used to set up distributed training')
     parser.add_argument('--dist-backend', default='gloo', type=str,
                         help='distributed backend')
-    parser.add_argument('--gpu',  action='store_true',
-                        help='Enable CUDA')
+    """
 
     return parser
 
@@ -74,14 +75,16 @@ def main():
     parser = create_arg_parser()
     args = parser.parse_args()
 
+    # choose computation device: CPU/GPU
+    print("=> visable GPU card: #{:d}".format(gpu_config_torch.gpu_no))
     args.device = None
     if args.gpu:
         args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     else:
         args.device = torch.device('cpu')
-    print("torch device: ", args.device)
+    print("=> use device: ", args.device)
 
-    # create model
+    # create model instance
     if args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
@@ -114,7 +117,7 @@ def main():
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
+            args.start_epoch = checkpoint['epoch'] + 1
             best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -125,12 +128,13 @@ def main():
 
     cudnn.benchmark = True
 
-    # Data loading code
+    # Load dataset & dataloader
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(10, cut_len=2000, lite_version=True)
     from my_dataset import get_cifar_10
-    train_loader, val_loader = get_cifar_10(batch_size=16, shuffle=True, num_workers=args.workers)
+    train_loader, val_loader = get_cifar_10(batch_size=args.batch_size,
+                                            shuffle=True, num_workers=args.workers)
 
     if args.evaluate:
         validate(val_loader, model, criterion)
@@ -148,7 +152,7 @@ def main():
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
-        save_checkpoint({'epoch': epoch + 1,
+        save_checkpoint({'epoch': epoch,
                          'arch': args.arch,
                          'state_dict': model.state_dict(),
                          'best_prec1': best_prec1,
@@ -253,14 +257,16 @@ def validate(val_loader, model, criterion):
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pytorch'):
-    par_dir = os.path.dirname(os.path.abspath(filename))
-    if not os.path.exists(par_dir):
-        utils.create_dir(par_dir)
+    fp = os.path.abspath(filename)
+    par_dir = os.path.dirname(fp)
+    utils.create_dir(fp)
 
     torch.save(state, filename)
+    print("Checkpoint saved at {:s}".format(filename))
     if is_best:
-        shutil.copyfile(filename,
-                        os.path.join(par_dir, 'best_checkpoint.pytorch'))
+        fp2 = os.path.join(par_dir, 'best_checkpoint.pytorch')
+        shutil.copyfile(filename,fp2)
+        print("New best checkpoint found. Saved at {:s}".format(fp2))
 
 
 class AverageMeter(object):

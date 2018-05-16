@@ -1,8 +1,9 @@
 import os
-import torch
+# import torch
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '3'
+gpu_no = 5
+os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_no)
 
 # use limited GPU resources
 # Assume that we are on a CUDA machine, then this should print a CUDA device:
