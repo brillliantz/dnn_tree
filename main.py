@@ -51,10 +51,12 @@ def create_arg_parser():
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 20)')
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+    tmp = 'saved_torch_models/resnet_40k/model.pytorch'
+    parser.add_argument('--resume', type=str, metavar='PATH',
+                        default='',
                         help='path to latest checkpoint (default: none)')
-    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                        help='evaluate model on validation set')
+    parser.add_argument('--run_mode', type=str, metavar='MODE', default='',
+                        help='[evaluate] or [predict]')
     parser.add_argument('--gpu',  action='store_true', default=True,
                         help='Enable CUDA')
     '''
@@ -185,8 +187,17 @@ def main():
     # train_loader, val_loader = get_future_bar_classification_data(batch_size=args.batch_size, cut_len=0)
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
 
-    if args.evaluate:
-        validate(val_loader, model, criterion)
+    if args.run_mode == 'predict':
+        y_true, y_pred = model_predict(test_loader=val_loader, model=model, out_numpy=True)
+        import numpy as np
+        np.save('y_true', y_true)
+        np.save('y_pred', y_pred)
+        return
+    
+    elif args.run_mode == 'evaluate':
+        score, loss = model_score(val_loader, model, utils.calc_rsq, criterion)
+        print("Val_loss = {:+4.6f}".format(loss.item()))
+        print("Val_score = {:+4.6f}".format(score.item()))
         return
 
     for epoch in range(args.start_epoch, args.epochs):
