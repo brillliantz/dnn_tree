@@ -162,7 +162,11 @@ def main():
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
+            if args.device.type == 'cpu':
+                map_loc_func = lambda storage, location: storage
+            else:
+                map_loc_func = None
+            checkpoint = torch.load(args.resume, map_location=map_loc_func)
             args.start_epoch = checkpoint['epoch'] + 1
             best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
@@ -188,10 +192,12 @@ def main():
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
 
     if args.run_mode == 'predict':
-        y_true, y_pred = model_predict(test_loader=val_loader, model=model, out_numpy=True)
+        y_true, y_pred = model_predict(test_loader=val_loader, model=model)
+        print("score ", utils.calc_rsq(y_true, y_pred))
         import numpy as np
-        np.save('y_true', y_true)
-        np.save('y_pred', y_pred)
+        np.save('y_true', y_true.numpy())
+        np.save('y_pred', y_pred.numpy())
+        print("Saved npy file.")
         return
     
     elif args.run_mode == 'evaluate':
