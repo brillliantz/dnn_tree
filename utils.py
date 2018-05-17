@@ -49,8 +49,6 @@ def calc_topk_accu(output, target, topk=(1,)):
         return res
 
 
-
-
 def time_it(func, *args, **kwargs):
     import time
     t0 = time.time()
