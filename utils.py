@@ -23,9 +23,9 @@ def argmax(tensor, dim):
     return res
 
 
-def calc_accu(y, yhat, argmax=True):
+def calc_accu(y, yhat, do_argmax=True):
     # yhat = yhat.data
-    if argmax:
+    if do_argmax:
         yhat = argmax(yhat, dim=1)
     eq = torch.eq(y, yhat)
     accuracy = torch.mean(torch.tensor(eq, dtype=torch.float32))
