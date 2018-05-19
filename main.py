@@ -54,8 +54,8 @@ def create_arg_parser():
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 20)')
     parser.add_argument('--resume', type=str, metavar='PATH',
-                        default='',
-                        # default=SAVE_MODEL_FP,
+                        # default='',
+                        default=SAVE_MODEL_FP,
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--run_mode', type=str, metavar='MODE', default='',
                         help='[evaluate] or [predict]')
@@ -118,7 +118,7 @@ def main():
     args = parser.parse_args()
 
     # choose computation device: CPU/GPU
-    print("=> visable GPU card: #{:d}".format(gpu_config_torch.gpu_no))
+    print("=> visable GPU card: #{:s}".format(','.join(gpu_config_torch.gpu_no)))
     args.device = None
     if args.gpu:
         args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -143,14 +143,10 @@ def main():
         # from resnet import resnet18
         # model = resnet18(num_classes=1, in_channels=8)
 
-    if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-        model.features = torch.nn.DataParallel(model.features)
-        # model.cuda()
-        model.to(args.device)
-    else:
-        # model = torch.nn.DataParallel(model).cuda()
+    if torch.cuda.device_count() > 0:
+        print("=> Let's use", torch.cuda.device_count(), "GPUs!")
         model = torch.nn.DataParallel(model)
-        model.to(args.device)
+    model.to(args.device)
 
     # define loss function (criterion) and optimizer
     # criterion = nn.CrossEntropyLoss()  # .cuda()
@@ -192,29 +188,30 @@ def main():
 
     # Load dataset & dataloader
     # DEBUG
-    args.batch_size = 32
-    args.print_freq = 10
+    args.batch_size = 128
+    args.print_freq = 200
     print("=> start to load data. Using batch_size {:d}".format(args.batch_size))
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
+    cut_len = 0
     ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
-                               #'Data/future_new/' + 'rb_20160901_20160930.hd5',
-                               #'Data/future_new/' + 'rb_20161001_20161031.hd5',
-                               #'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                               'Data/future_new/' + 'rb_20160901_20160930.hd5',
+                               'Data/future_new/' + 'rb_20161001_20161031.hd5',
+                               'Data/future_new/' + 'rb_20161101_20161130.hd5',
                               ],
                               'valid_data', backward_window=224, forward_window=60,
                               train_mode=True, train_ratio=0.7,
-                              cut_len=2000)
+                              cut_len=cut_len)
     train_loader = get_future_loader_from_dataset(ds, batch_size=args.batch_size)
     ds_val = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
-                                   #'Data/future_new/' + 'rb_20160901_20160930.hd5',
-                                   #'Data/future_new/' + 'rb_20161001_20161031.hd5',
-                                   #'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                                   'Data/future_new/' + 'rb_20160901_20160930.hd5',
+                                   'Data/future_new/' + 'rb_20161001_20161031.hd5',
+                                   'Data/future_new/' + 'rb_20161101_20161130.hd5',
                                    ],
                                   'valid_data', backward_window=224, forward_window=60,
                                   train_mode=False, train_ratio=0.7,
-                                  cut_len=2000)
+                                  cut_len=cut_len)
     val_loader = get_future_loader_from_dataset(ds_val, batch_size=args.batch_size)
     # from my_dataset import get_cifar_10
     # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
