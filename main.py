@@ -3,6 +3,8 @@ import os
 import shutil
 import time
 
+from tqdm import tqdm
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -20,8 +22,8 @@ model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-SAVE_MODEL_FP = 'saved_torch_models/resnet/model.pytorch'
-best_prec1 = 0
+SAVE_MODEL_FP = 'saved_torch_models/resnet_preact2/model.pytorch'
+best_score = 0
 
 
 def create_arg_parser():
@@ -51,9 +53,9 @@ def create_arg_parser():
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 20)')
-    tmp = 'saved_torch_models/resnet_40k/model.pytorch'
     parser.add_argument('--resume', type=str, metavar='PATH',
                         default='',
+                        # default=SAVE_MODEL_FP,
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--run_mode', type=str, metavar='MODE', default='',
                         help='[evaluate] or [predict]')
@@ -76,9 +78,12 @@ def create_arg_parser():
 def model_predict(test_loader, model, out_numpy=False):
     y_true_list = []
     y_pred_list = []
-    
+
+    # important!
+    model.eval()
+
     with torch.no_grad():
-        for features, labels in test_loader:
+        for features, labels in tqdm(test_loader):
             features, labels = features.to(args.device), labels.to(args.device)
             
             outputs = model(features)
@@ -107,7 +112,7 @@ def model_score(test_loader, model, score_func, loss_func):
 
 
 def main():
-    global args, best_prec1
+    global args, best_score
     parser = create_arg_parser()
     args = parser.parse_args()
 
@@ -127,8 +132,8 @@ def main():
     else:
         print("=> creating model '{}'".format(args.arch))
         # model = models.__dict__[args.arch](num_classes=10)
-        from model.resnet import resnet18
-        model = resnet18(dim=1,
+        from model.resnet import resnet18_pre_act
+        model = resnet18_pre_act(dim=1,
                          pretrained=False,
                          in_planes=8,
                          num_classes=1,)
@@ -148,15 +153,21 @@ def main():
 
     # define loss function (criterion) and optimizer
     # criterion = nn.CrossEntropyLoss()  # .cuda()
-    criterion = nn.MSELoss()
+    # score_func = utils.calc_accu
+    # criterion = nn.modules.loss.L1Loss()
+    criterion = utils.InvestLoss()
+    score_func = utils.calc_rsq
+    
     criterion.to(args.device)
 
     # optimizer = torch.optim.SGD(model.parameters(), args.lr,
     #                             momentum=args.momentum,
     #                             weight_decay=args.weight_decay)
+    # args.lr = 0.1
     optimizer = torch.optim.Adam(model.parameters(),
                                  args.lr, betas=(0.9, 0.999), eps=1e-8,
                                  weight_decay=0)
+    # optimizer = torch.optim.RMSprop(model.parameters())
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -168,7 +179,7 @@ def main():
                 map_loc_func = None
             checkpoint = torch.load(args.resume, map_location=map_loc_func)
             args.start_epoch = checkpoint['epoch'] + 1
-            best_prec1 = checkpoint['best_prec1']
+            best_score = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
@@ -180,17 +191,18 @@ def main():
 
     # Load dataset & dataloader
     # DEBUG
-    args.batch_size = 100
+    args.batch_size = 16
     args.print_freq = 10
     print("=> use batch_size {:d}".format(args.batch_size))
     from my_dataset import get_future_loader
-    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=40000, lite_version=True)
+    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=12000, lite_version=True)
     # from my_dataset import get_cifar_10
     # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     # from my_dataset import get_future_bar_classification_data
     # train_loader, val_loader = get_future_bar_classification_data(batch_size=args.batch_size, cut_len=0)
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
 
+    # args.run_mode = 'evaluate'
     if args.run_mode == 'predict':
         y_true, y_pred = model_predict(test_loader=val_loader, model=model)
         print("score ", utils.calc_rsq(y_true, y_pred))
@@ -201,7 +213,10 @@ def main():
         return
     
     elif args.run_mode == 'evaluate':
-        score, loss = model_score(val_loader, model, utils.calc_rsq, criterion)
+        # core, loss = model_score(train_loader, model, score_func, criterion)
+        # print("=> Train_loss = {:+4.6f}".format(loss.item()))
+        # print("=> Train_score = {:+4.6f}".format(score.item()))
+        score, loss = model_score(val_loader, model, score_func, criterion)
         print("Val_loss = {:+4.6f}".format(loss.item()))
         print("Val_score = {:+4.6f}".format(score.item()))
         return
@@ -213,18 +228,20 @@ def main():
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        # prec1 = validate(val_loader, model, criterion)
-        score, loss = model_score(val_loader, model, utils.calc_rsq, criterion)
-        print("Val_loss = {:+4.6f}".format(loss.item()))
-        print("Val_score = {:+4.6f}".format(score.item()))
+        score, loss = model_score(train_loader, model, score_func, criterion)
+        print("=> Train_loss = {:+4.6f}".format(loss.item()))
+        # print("=> Train_score = {:+4.6f}".format(score.item()))
+        score, loss = model_score(val_loader, model, score_func, criterion)
+        print("=> Val_loss = {:+4.6f}".format(loss.item()))
+        # print("=> Val_score = {:+4.6f}".format(score.item()))
 
         # remember best prec@1 and save checkpoint
-        is_best = score > best_prec1
-        best_prec1 = max(score, best_prec1)
+        is_best = score > best_score
+        best_score = max(score, best_score)
         save_checkpoint({'epoch': epoch,
                          'arch': args.arch,
                          'state_dict': model.state_dict(),
-                         'best_prec1': best_prec1,
+                         'best_prec1': best_score,
                          'optimizer' : optimizer.state_dict(),
                          },
                         is_best,
@@ -376,6 +393,56 @@ def adjust_learning_rate(optimizer, epoch):
         param_group['lr'] = lr
 
     print("=> learning rate adjusted as {:.3e}".format(lr))
+
+
+def main_predict(loader, model_save_path):
+    global args, best_score
+    parser = create_arg_parser()
+    args = parser.parse_args()
+    
+    # choose computation device: CPU/GPU
+    print("=> visable GPU card: #{:d}".format(gpu_config_torch.gpu_no))
+    try_use_gpu = True
+    if try_use_gpu:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device('cpu')
+    print("=> use device: ", device)
+    args.device = device
+    
+    # create model instance
+    print("=> creating model ")
+    from model.resnet import resnet18_pre_act
+    model = resnet18_pre_act(dim=1,
+                             pretrained=False,
+                             in_planes=8,
+                             num_classes=1,)
+    
+    # model = torch.nn.DataParallel(model).cuda()
+    model = torch.nn.DataParallel(model)
+    model.to(device)
+    
+    # resume from a checkpoint
+    if os.path.isfile(model_save_path):
+        print("=> loading checkpoint '{}'".format(model_save_path))
+        if device.type == 'cpu':
+            map_loc_func = lambda storage, location: storage
+        else:
+            map_loc_func = None
+        checkpoint = torch.load(model_save_path, map_location=map_loc_func)
+        start_epoch = checkpoint['epoch'] + 1
+        model.load_state_dict(checkpoint['state_dict'])
+        print("=> loaded checkpoint '{}' (epoch {})"
+              .format(model_save_path, checkpoint['epoch']))
+    else:
+        print("=> no checkpoint found at '{}'".format(model_save_path))
+
+    cudnn.benchmark = True
+    
+    y_true, y_pred = model_predict(test_loader=loader, model=model)
+    
+    print(y_true.shape, y_pred.shape)
+    return y_true, y_pred
 
 
 if __name__ == '__main__':
