@@ -91,6 +91,10 @@ class FutureTickDataset(Dataset):
         # X, Y都是np.ndarray
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
+        
+        # DEBUG
+        # self.y = np.random.lognormal(size=(len(self.y), 1))
+        # self.y = np.random.randn(len(self.y), 1)
 
         self.x = self.x.astype(np.float32)
         self.y = self.y.astype(np.float32)
@@ -127,6 +131,112 @@ class FutureTickDataset(Dataset):
         return sample_x, sample_y
 
 
+class FutureTickDatasetNew(Dataset):
+    """
+    China Future Tick Data.
+
+    """
+    def __init__(self, data_path, key,
+                 backward_window=240, forward_window=60
+                 ):
+        # 预测时间跨度
+        self.forward_window = forward_window
+        self.backward_window = backward_window
+        
+        self._df_raw = self._load_data(data_path, key)
+        
+        self.index = None
+        self.df = None
+        self.x = None
+        self.y = None
+        
+        self._preprocess()
+        self._validate()
+        to_tensor = transforms.ToTensor()
+        self.x = torch.Tensor(self.x)
+        self.y = torch.Tensor(self.y)
+    
+    def _load_data(self, path, key):
+        df = pd.read_hdf(path, key)
+        return df
+    
+    def _preprocess(self):
+        # 要使用的自变量
+        X_COLS = [#'book_pressure_norm',
+            #'datetime'
+            'mid',
+            'last', 'bidprice1', 'askprice1', 'bidvolume1', 'askvolume1', 'volume_diff', 'oi_diff',
+        ]
+        XY_COLS = X_COLS.copy()
+        if 'mid' not in XY_COLS:
+            XY_COLS.append('mid')
+        
+        self.dirty_index = self._df_raw['dirty_index']
+        self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
+        self._df_raw = self._df_raw.reindex(columns=XY_COLS)
+        # 目标预测变量
+        self._df_raw.loc[:, 'y'] = self._df_raw['mid'].pct_change(self.forward_window).shift(-self.forward_window)
+        
+        # TODO: std
+        roll = self._df_raw.rolling(window=self.backward_window, axis=0)
+        self.df = (self._df_raw - roll.mean()) / roll.std()
+        
+        # self.df = self._df_raw.loc[self._mask]  # .dropna()
+        
+        # X, Y都是np.ndarray
+        self.x = self.df[X_COLS].values
+        self.y = self.df['y'].values.reshape([-1, 1])
+        
+        self.x = self.x.astype(np.float32)
+        self.y = self.y.astype(np.float32)
+        
+        '''
+        train_ratio = 0.7
+        train_len = int(len(self.x) * train_ratio)
+        if self.train_mode:
+            self.x = self.x[: train_len]
+            self.y = self.y[: train_len]
+        else:
+            self.x = self.x[train_len:]
+            self.y = self.y[train_len:]
+        
+        '''
+        # [time_window, n_feature] to [n_feature, time_window]
+        # because torch.nn.Conv inputs are of shape [batch, n_channels, sample_shape]
+        self.x = np.swapaxes(self.x, 0, 1)
+        self.y = np.swapaxes(self.y, 0, 1)
+        
+        # import gc
+        # del self._df_raw
+        # del self.df
+        # gc.collect()
+    
+    def _validate(self):
+        pass
+        '''
+        nan_count = np.sum(np.isnan(
+                self.x[self.index]
+        ))
+        assert nan_count == 0
+        nan_count = np.sum(np.isnan(
+                self.y[self.index]
+        ))
+        assert nan_count == 0
+        
+        '''
+    
+    def __len__(self):
+        return len(self.index) - self.backward_window
+    
+    def __getitem__(self, idx):
+        # start, end = self.index[idx], self.index[idx + self.backward_window]
+        start = self.index[idx]
+        sample_x = self.x[:, start: start + self.backward_window]
+        sample_y = self.y[:, self.backward_window]
+        
+        return sample_x, sample_y
+
+
 class FutureBarDataset(Dataset):
     """
     China Future Tick Data.
@@ -146,12 +256,9 @@ class FutureBarDataset(Dataset):
             x = x[:cut_len]
             y = y[:cut_len]
 
-        y = y[:, 0]  # dicard time step dimension (which is 1)
-
         # from keras.utils.np_utils import to_categorical
         # y = to_categorical(y, num_classes=3)
         y = y.reshape([-1])
-        y = y + 1
 
         self.x = np.asanyarray(x, dtype=np.float32)
         self.y = np.asarray(y, dtype=np.int64)
@@ -194,7 +301,9 @@ def get_future_loader(batch_size, cut_len, lite_version=True):
           "Test dataset len: {:d}".format(len(ds_train), len(ds_test)))
 
     y_abs = np.abs(ds_train.y)
-    print("Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
+    print("Train dataset Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
+    y_abs = np.abs(ds_test.y)
+    print("Test dataset Y mean = {:.3e}, Y median = {:.3e}".format(np.mean(y_abs), np.median(y_abs)))
 
     ds_len = len(ds_train)
     itr_per_epoch = ds_len // batch_size
@@ -206,14 +315,28 @@ def get_future_loader(batch_size, cut_len, lite_version=True):
     return trainloader, testloader
 
 
+def get_future_loader_from_dataset(dataset, batch_size):
+    print("Train dataset len: {:d}\n"
+          "Test dataset len: {:d}".format(len(dataset), len(dataset)))
+    
+    y_abs = np.abs(dataset.y)
+    print("dataset Y mean = {:.3e}, Y median = {:.3e}".format(y_abs.mean(), y_abs.median()))
+    
+    ds_len = len(dataset)
+    itr_per_epoch = ds_len // batch_size
+    print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
+    
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,)
+    
+    return loader
+
+
 def test_dataset_for_loop():
-    composed = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
-    ds = FutureTickDataset(240, 60,
-                           transform=composed
-                           )
+    ds = FutureTickDataset(224, 60, cut_len=40000, train=True, lite_version=True)
 
     for i in range(len(ds)):
         x, y = ds[i]
+        pass
         # print(i, type(x), x.shape, type(y), y.shape)
 
 
@@ -288,7 +411,7 @@ if __name__ == "__main__":
     # test_dataset_for_loop()
     from utils import time_it
     time_it(
-        # test_dataset_for_loop
+        test_dataset_for_loop
         # test_dataset_loader
-        get_cifar_10, 10, shuffle=True
+        # get_cifar_10, 10, shuffle=True
     )
