@@ -9,7 +9,12 @@ import torch.functional as F
 from torch.nn.modules.loss import _Loss, _assert_no_grad
 
 __all__ = ['calc_rsq', 'calc_accu', 'calc_topk_accu',
-           'argmax', 'time_it', 'create_dir']
+           'argmax', 'time_it', 'create_dir',
+           'isnan']
+
+
+def isnan(x):
+    return x != x
 
 
 def invest_loss(yhat, y):
