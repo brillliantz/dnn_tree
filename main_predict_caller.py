@@ -35,18 +35,33 @@ def test():
 def test_dataset():
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
     
-    ds = FutureTickDatasetNew('rb1701.SHF_20160801.hd5', 'valid_data', backward_window=224, forward_window=60)
+    ds = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
+                              'valid_data', backward_window=224, forward_window=60)
     for i in range(len(ds)):
         x, y = ds[i]
         assert len(x.shape) == 2
-        assert not np.any(np.isnan(x))
-        assert not np.any(np.isnan(y))
+        try:
+            assert not np.any(np.isnan(x))
+            assert not np.any(np.isnan(y))
+        except AssertionError:
+            print("error in for loop")
+            real_i = ds.index[i]
+            df = ds._df_raw.iloc[real_i: real_i + ds.backward_window]
+            print(i, real_i)
+            print(np.isnan(x).sum(axis=0))
     
     loader = get_future_loader_from_dataset(ds, batch_size=16)
-    for x, y in loader:
-        assert len(x.shape) == 3
-        assert not np.any(np.isnan(x))
-        assert not np.any(np.isnan(y))
+    for i, (x, y) in enumerate(loader):
+        try:
+            assert len(x.shape) == 3
+            assert not np.any(np.isnan(x))
+            assert not np.any(np.isnan(y))
+        except AssertionError:
+            print("error in loader")
+            real_i = ds.index[i]
+            x1 = x.numpy()
+            print(i, real_i)
+            print(np.isnan(x1).sum(axis=0))
     
     print("")
 

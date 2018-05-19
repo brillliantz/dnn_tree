@@ -9,6 +9,8 @@ import torchvision
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
 
+import preprocessing
+
 
 class FutureTickDataset(Dataset):
     """
@@ -136,100 +138,115 @@ class FutureTickDatasetNew(Dataset):
     China Future Tick Data.
 
     """
-    def __init__(self, data_path, key,
-                 backward_window=240, forward_window=60
+    def __init__(self, data_paths, key='valid_data',
+                 backward_window=240, forward_window=60,
+                 train_mode=True, train_ratio=0.7,
                  ):
-        # 预测时间跨度
+        if not isinstance(data_paths, list):
+            data_paths = [data_paths]
+            
         self.forward_window = forward_window
         self.backward_window = backward_window
+        self.train_mode = train_mode
+        self.train_ratio = train_ratio
         
-        self._df_raw = self._load_data(data_path, key)
+        self._df_raw = None
+        self.df = None
         
         self.index = None
-        self.df = None
+        
         self.x = None
         self.y = None
         
+        self._df_raw = self._load_data(data_paths, key)
+        self._split_train_test()
         self._preprocess()
         self._validate()
-        to_tensor = transforms.ToTensor()
-        self.x = torch.Tensor(self.x)
-        self.y = torch.Tensor(self.y)
     
-    def _load_data(self, path, key):
-        df = pd.read_hdf(path, key)
+    def _load_data(self, paths, key):
+        dfs = []
+        for p in paths:
+            df = pd.read_hdf(p, key)
+            dfs.append(df)
+        df = pd.concat(dfs, axis=0)
         return df
     
+    def _split_train_test(self):
+        n = len(self._df_raw)
+        train_len = int(n * self.train_ratio)
+        if self.train_mode:
+            self._df_raw = self._df_raw[: train_len]
+        else:
+            self._df_raw = self._df_raw[train_len:]
+        
     def _preprocess(self):
+        # Roll dirty index to get complete dirty_index
+        self._df_raw.loc[:, 'dirty_index'].iloc[: self.backward_window] = True
+        self._df_raw.loc[:, 'dirty_index'] = \
+            preprocessing.roll_dirty_index(self._df_raw['dirty_index'],
+                                           backward_len=0,
+                                           forward_predict_len=max(self.forward_window, self.backward_window))
         # 要使用的自变量
-        X_COLS = [#'book_pressure_norm',
-            #'datetime'
-            'mid',
-            'last', 'bidprice1', 'askprice1', 'bidvolume1', 'askvolume1', 'volume_diff', 'oi_diff',
-        ]
-        XY_COLS = X_COLS.copy()
+        X_COLS = ['mid', 'last',
+                  'bidprice1', 'askprice1',
+                  'bidvolume1', 'askvolume1',
+                  'volume_diff', 'oi_diff',
+                  ]
+        XY_COLS = X_COLS.copy() + ['y']
         if 'mid' not in XY_COLS:
             XY_COLS.append('mid')
         
-        self.dirty_index = self._df_raw['dirty_index']
-        self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
-        self._df_raw = self._df_raw.reindex(columns=XY_COLS)
-        # 目标预测变量
         self._df_raw.loc[:, 'y'] = self._df_raw['mid'].pct_change(self.forward_window).shift(-self.forward_window)
+        self.df = self._df_raw.reindex(columns=XY_COLS)
         
         # TODO: std
-        roll = self._df_raw.rolling(window=self.backward_window, axis=0)
-        self.df = (self._df_raw - roll.mean()) / roll.std()
+        roll = self.df.rolling(window=self.backward_window, axis=0)
+        std_eq_zero_mask = (roll.std() < 1e-8).any(axis=1)
+        std_eq_zero_mask = preprocessing.roll_dirty_index(std_eq_zero_mask,
+                                                          backward_len=0,
+                                                          forward_predict_len=max(self.forward_window, self.backward_window))
+        didx = self._df_raw['dirty_index']
+        didx = np.logical_or(std_eq_zero_mask, didx)
+        self._df_raw.loc[:, 'dirty_index'] = didx
+        self.dirty_index = didx.copy()
+        self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
         
-        # self.df = self._df_raw.loc[self._mask]  # .dropna()
+        self.df = (self.df - roll.mean()) / roll.std()
         
-        # X, Y都是np.ndarray
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
         
         self.x = self.x.astype(np.float32)
         self.y = self.y.astype(np.float32)
         
-        '''
-        train_ratio = 0.7
-        train_len = int(len(self.x) * train_ratio)
-        if self.train_mode:
-            self.x = self.x[: train_len]
-            self.y = self.y[: train_len]
-        else:
-            self.x = self.x[train_len:]
-            self.y = self.y[train_len:]
-        
-        '''
-        # [time_window, n_feature] to [n_feature, time_window]
-        # because torch.nn.Conv inputs are of shape [batch, n_channels, sample_shape]
+        # Because torch.nn.Conv inputs are of shape [batch, n_channels, sample_shape]
+        # [time_window, n_feature] -> [n_feature, time_window]
         self.x = np.swapaxes(self.x, 0, 1)
         self.y = np.swapaxes(self.y, 0, 1)
+
+        # self.x = torch.Tensor(self.x)
+        # self.y = torch.Tensor(self.y)
         
-        # import gc
-        # del self._df_raw
-        # del self.df
-        # gc.collect()
-    
     def _validate(self):
-        pass
-        '''
-        nan_count = np.sum(np.isnan(
-                self.x[self.index]
-        ))
-        assert nan_count == 0
-        nan_count = np.sum(np.isnan(
-                self.y[self.index]
-        ))
-        assert nan_count == 0
+        assert self.df.shape[0] == self._df_raw.shape[0]
+        for df in [self._df_raw, self.df]:
+            clean_data = df.loc[self.index]
+            nan_count = clean_data.isnull().sum().sum()
+            assert nan_count == 0
         
-        '''
-    
+        print("Validate pass.")
+        
+    def show_statistics(self):
+        df = self.df.loc[self.index]
+        print("\n" + "="*5 + "Dataset statistics: ")
+        print(df.describe())
+        print("\n" + "="*5 + "Median of abs(y): ")
+        print(np.median(np.abs(df['y']), axis=0))
+        
     def __len__(self):
         return len(self.index) - self.backward_window
     
     def __getitem__(self, idx):
-        # start, end = self.index[idx], self.index[idx + self.backward_window]
         start = self.index[idx]
         sample_x = self.x[:, start: start + self.backward_window]
         sample_y = self.y[:, self.backward_window]
@@ -319,8 +336,7 @@ def get_future_loader_from_dataset(dataset, batch_size):
     print("Train dataset len: {:d}\n"
           "Test dataset len: {:d}".format(len(dataset), len(dataset)))
     
-    y_abs = np.abs(dataset.y)
-    print("dataset Y mean = {:.3e}, Y median = {:.3e}".format(y_abs.mean(), y_abs.median()))
+    # dataset.show_statistics()
     
     ds_len = len(dataset)
     itr_per_epoch = ds_len // batch_size

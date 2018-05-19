@@ -148,7 +148,7 @@ class RemoteDataService2(RemoteDataService):
 
 若idx=k处数据不可用，则
   计算forward return需要用后面forward_len长度的数据：[k-forward_len, k]总长(forward_len + 1)的数据点都不可用
-  学习时用到前面总长backward_len的数据，则[k, k+backward_len-1]总长backward_len的数据点都不可用
+  学习时用到后面总长backward_len的数据，则[k-backward_len+1, k]总长backward_len的数据点都不可用
 
 15:00和21:00的两个session由于有开盘竞价，所以不可连一起；
 23:00和09:00的两个session由于夜里发生很多事件，所以不可连一起；
@@ -158,8 +158,10 @@ class RemoteDataService2(RemoteDataService):
 
 理想处理方法:
 1. 把两个“连续session”之间增加一个dummy data point，并标记为不可用，
-2. 将所有不可用点的前后也mask上
-3. 循环的时候只循环可用index
+2. 拼起来所有session
+2. 将所有不可用点的前后也mask掉
+4. 再额外把最开头的backward_len长度的点mask掉
+5. 循环的时候只循环可用index
 
 改进处理方法 - 把第一步改为：
 1. 直接把收盘的那个data point标记为不可用。（因为接近收盘都平仓了，不需要继续预测）
@@ -457,12 +459,6 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
     valid_data = pd.concat(valid_data_list, axis=0)
     valid_data.index = np.arange(valid_data.shape[0])
 
-    # Dump to local file
-    valid_data.to_hdf('{symbol_prefix:s}_{start_date:8d}_{end_date:8d}.hd5'.format(symbol_prefix=symbol_prefix,
-                                                                                   start_date=start_date,
-                                                                                   end_date=end_date),
-                      key='valid_data')
-    
     # Get clean_data
     # clean_data = valid_data.drop(index=dirty_index_new.index[dirty_index_new.values])
     # print(clean_data.shape)
@@ -471,40 +467,57 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
     return valid_data
 
 
-def roll_dirty_index(valid_data, backward_len=224, forward_predict_len=60):
+def roll_dirty_index(dirty_index, backward_len=224, forward_predict_len=60):
+    dirty_index = dirty_index.astype(bool)
     
-    if backward_len and forward_predict_len:
-        dirty_index = valid_data['dirty_index']
-        print("Before roll: {:5d}, {:.2f}% data points are cut-off in total".format(
-                sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
-        ))
-        dirty_before = dirty_index.rolling(window=forward_predict_len + 1).apply(np.any).shift(-forward_predict_len)
-        dirty_after = dirty_index.rolling(window=backward_len).apply(np.any)
-        dirty_before = dirty_before.fillna(1.0).astype(bool)
-        dirty_after = dirty_after.fillna(1.0).astype(bool)
-        dirty_index_new = pd.DataFrame(data={'original': dirty_index,
-                                             'before'  : dirty_before,
-                                             'after'   : dirty_after}).any(axis=1)
-        
-        print(" After roll: {:5d}, {:.2f}% data points are cut-off in total".format(
-                sum(dirty_index_new), sum(dirty_index_new) * 1.0 / len(dirty_index_new)
-        ))
-        print("Result data shape: {}, n_trade_days: {:d}".format(valid_data.shape,
-                                                                 len(np.unique(valid_data['date']))))
-        
-        assert valid_data.shape[0] == dirty_index_new.shape[0]
-        valid_data.loc[:, 'dirty_index'] = dirty_index_new
-        
-        return valid_data
+    print("Before roll: {:5d}, {:.2f}% data points are cut-off in total".format(
+            sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
+    ))
+    dirty_before = dirty_index.rolling(window=forward_predict_len + 1).apply(np.any).shift(-forward_predict_len)
+    # dirty_after = dirty_index.rolling(window=backward_len).apply(np.any)
+    dirty_before = dirty_before.fillna(1.0).astype(bool)
+    # dirty_after = dirty_after.fillna(1.0).astype(bool)
+    dirty_index_new = pd.DataFrame(data={'original': dirty_index,
+                                         'before'  : dirty_before,
+                                         # 'after'   : dirty_after
+                                         }).any(axis=1)
+    
+    print(" After roll: {:5d}, {:.2f}% data points are cut-off in total".format(
+            sum(dirty_index_new), sum(dirty_index_new) * 1.0 / len(dirty_index_new)
+    ))
+    assert dirty_index.shape[0] == dirty_index_new.shape[0]
+    
+    return dirty_index_new
 
 
 def test_range_pre_process_and_roll():
-    res = process_range_symbol_data('rb', 20160824, 20160831,
-                                    days_to_list=30, front_months=['01', '05', '10'],
-                                    )
-    res = roll_dirty_index(res,
-                           backward_len=224, forward_predict_len=60)
-    print("done")
+    symbol_prefix = 'rb'
+    
+    months = [#(20161001, 20161031),
+              #(20161101, 20161130),
+              (20170101, 20170131),
+              # (20170201, 20170228)
+              ]
+    for start_date, end_date in months:
+        
+        # Get pre-processed data (with dirty index) between [start_date, end_date]
+        res = process_range_symbol_data(symbol_prefix, start_date, end_date,
+                                        days_to_list=30, front_months=['01', '05', '10'],
+                                        )
+
+        # Roll dirty index to get complete dirty_index
+        # We do not do it here. Instead, we do it before training models.
+        # res.loc[:, 'dirty_index'] = roll_dirty_index(res['dirty_index'], backward_len=224, forward_predict_len=60)
+        
+        # Dump to local file
+        res.to_hdf('Data/future_new/'
+                   '{symbol_prefix:s}_'
+                   '{start_date:8d}_'
+                   '{end_date:8d}.hd5'.format(symbol_prefix=symbol_prefix,
+                                                                                start_date=start_date,
+                                                                                end_date=end_date),
+                   key='valid_data')
+    pass
 
 
 if __name__ == "__main__":
