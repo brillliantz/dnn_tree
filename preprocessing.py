@@ -147,7 +147,7 @@ class RemoteDataService2(RemoteDataService):
 
 若idx=k处数据不可用，则
   计算forward return需要用后面forward_len长度的数据：[k-forward_len, k]总长(forward_len + 1)的数据点都不可用
-  学习时用到前面总长backward_len的数据，则[k, k+backward_len-1]的数据点都不可用
+  学习时用到前面总长backward_len的数据，则[k, k+backward_len-1]总长backward_len的数据点都不可用
 
 15:00和21:00的两个session由于有开盘竞价，所以不可连一起；
 23:00和09:00的两个session由于夜里发生很多事件，所以不可连一起；
@@ -356,7 +356,9 @@ def test_advanced_preprocess():
 
 
 def test_transforms():
-    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
+    # symbol, trade_date = 'rb1705.SHF', 20161226
+    symbol, trade_date = 'rb1701.SHF', 20160801
+    df = read_daily_csv(symbol, trade_date, data_root=DATA_ROOT)
     market_data = pre_process_df(df, KNOWN_COLS)
     print(market_data.shape)
     # print(res.columns)
@@ -371,7 +373,7 @@ def test_transforms():
         2. drop masked data points
         3. use BACKWARD_LEN data as input to model per data point
     '''
-    BACKWARD_LEN = 250  # in length
+    BACKWARD_LEN = 224  # in length
     FORWARD_PREDICT_LEN = 60  # in seconds
     TICKS_PER_SECOND = 2
     
@@ -405,8 +407,8 @@ def test_transforms():
     # 到这里位置每天数据处理完毕，可把多日同一合约的处理后数据连起来，然后进行下方的before、after操作，
     # 即可得到clean_index
     
-    dirty_before = dirty_index.rolling(window=BACKWARD_LEN + 1).apply(np.any).shift(-BACKWARD_LEN)
-    dirty_after = dirty_index.rolling(window=FORWARD_PREDICT_LEN).apply(np.any)
+    dirty_before = dirty_index.rolling(window=FORWARD_PREDICT_LEN + 1).apply(np.any).shift(-FORWARD_PREDICT_LEN)
+    dirty_after = dirty_index.rolling(window=BACKWARD_LEN).apply(np.any)
     dirty_before = dirty_before.fillna(1.0).astype(bool)
     dirty_after = dirty_after.fillna(1.0).astype(bool)
     dirty_index = pd.DataFrame(data={'original': dirty_index,
@@ -419,8 +421,10 @@ def test_transforms():
 
     assert valid_data.shape[0] == dirty_index.shape[0]
     valid_data.loc[:, 'dirty_index'] = dirty_index
-    valid_data.to_hdf('tmp.hd5', key='valid_data')
-    valid_data.to_msgpack('tmp.msgpk')
+    valid_data.to_hdf('{symbol:s}_{trade_date:8d}.hd5'.format(symbol=symbol,
+                                                              trade_date=trade_date),
+                      key='valid_data')
+    # valid_data.to_msgpack('tmp.msgpk')
     print("")
     # clean_data = valid_data.drop(index=dirty_index.index[dirty_index.values])
     # print(clean_data.shape)
