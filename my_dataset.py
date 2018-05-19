@@ -349,9 +349,9 @@ def get_future_loader(batch_size, cut_len, lite_version=True):
 
 
 def get_future_loader_from_dataset(dataset, batch_size):
-    print("=> dataset len: {:d}\n".format(len(dataset), len(dataset)))
-    
     ds_len = len(dataset)
+    print("=> dataset len: {:d}, batch_size: {:d}\n".format(ds_len, batch_size))
+    
     itr_per_epoch = ds_len // batch_size
     print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
     
