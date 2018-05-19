@@ -198,14 +198,24 @@ def main():
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
-    ds = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
+    ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
+                               #'Data/future_new/' + 'rb_20160901_20160930.hd5',
+                               #'Data/future_new/' + 'rb_20161001_20161031.hd5',
+                               #'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                              ],
                               'valid_data', backward_window=224, forward_window=60,
-                              train_mode=True, train_ratio=0.7)
-    train_loader = get_future_loader_from_dataset(ds, batch_size=16)
-    ds_val = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
+                              train_mode=True, train_ratio=0.7,
+                              cut_len=2000)
+    train_loader = get_future_loader_from_dataset(ds, batch_size=args.batch_size)
+    ds_val = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
+                                   #'Data/future_new/' + 'rb_20160901_20160930.hd5',
+                                   #'Data/future_new/' + 'rb_20161001_20161031.hd5',
+                                   #'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                                   ],
                                   'valid_data', backward_window=224, forward_window=60,
-                                  train_mode=False, train_ratio=0.7)
-    val_loader = get_future_loader_from_dataset(ds_val, batch_size=16)
+                                  train_mode=False, train_ratio=0.7,
+                                  cut_len=2000)
+    val_loader = get_future_loader_from_dataset(ds_val, batch_size=args.batch_size)
     # from my_dataset import get_cifar_10
     # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     # from my_dataset import get_future_bar_classification_data

@@ -14,8 +14,9 @@ def test():
     
     batch_size = 16
     # train_loader, val_loader = get_future_loader(batch_size=batch_size, cut_len=40000, lite_version=True)
-    ds = FutureTickDatasetNew('rb1701.SHF_20160801.hd5', 'valid_data', backward_window=224, forward_window=60,
-                              train_mode=True, train_ratio=0.7)
+    ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5'],
+                              'valid_data', backward_window=224, forward_window=60,
+                              train_mode=True, train_ratio=0.7, cut_len=1000)
     val_loader = get_future_loader_from_dataset(ds, batch_size=16)
     
     SAVE_MODEL_FP = 'saved_torch_models/resnet_preact2/model.pytorch'
@@ -36,8 +37,13 @@ def test():
 def test_dataset():
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
     
-    ds = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
-                              'valid_data', backward_window=224, forward_window=60)
+    ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
+                               #'Data/future_new/' + 'rb_20160901_20160930.hd5',
+                               #'Data/future_new/' + 'rb_20161001_20161031.hd5',
+                               #'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                               ],
+                              'valid_data', backward_window=224, forward_window=60,
+                               train_mode=True, train_ratio=1)
     for i in range(len(ds)):
         x, y = ds[i]
         assert len(x.shape) == 2
@@ -69,4 +75,4 @@ def test_dataset():
 
 if __name__ == "__main__":
     test_dataset()
-    # test()
+    #test()
