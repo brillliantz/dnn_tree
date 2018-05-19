@@ -16,6 +16,7 @@ import jaqs.util as jutil
 from jaqs.data import RemoteDataService
 
 
+HIGH_VOL_SECONDS = 60
 KNOWN_COLS = ['symbol', 'name', 'time', 'last', 'high',
               'low', 'volume_diff', 'volume', 'Unknown0', 'preoi',
               'oi', 'oi_diff', 'turnover', 'limit_up', 'limit_down',
@@ -355,9 +356,9 @@ def test_advanced_preprocess():
     # print(res.columns)
 
 
-def test_transforms():
-    # symbol, trade_date = 'rb1705.SHF', 20161226
-    symbol, trade_date = 'rb1701.SHF', 20160801
+def process_daily_symbol_data(symbol, trade_date):
+    global DATA_ROOT, HIGH_VOL_SECONDS
+    
     df = read_daily_csv(symbol, trade_date, data_root=DATA_ROOT)
     market_data = pre_process_df(df, KNOWN_COLS)
     print(market_data.shape)
@@ -367,28 +368,15 @@ def test_transforms():
     print(valid_data.shape)
     # print(res.columns)
     
-    '''
-    calculation order:
-        1. calculate y: forward return
-        2. drop masked data points
-        3. use BACKWARD_LEN data as input to model per data point
-    '''
-    BACKWARD_LEN = 224  # in length
-    FORWARD_PREDICT_LEN = 60  # in seconds
-    TICKS_PER_SECOND = 2
-    
-    HIGH_VOL_SECONDS = 60
     mask_high_vol = get_mask_high_vol(valid_data, high_vol_sec=HIGH_VOL_SECONDS)
     mask_limit_reach = get_mask_limit_reach(valid_data,
                                             before=0,
                                             after=0)
-                                            # before=TICKS_PER_SECOND * FORWARD_PREDICT_SEC,
-                                            # after=BACKWARD_LEN)
     mask_market_close = get_mask_market_close(valid_data)
-
+    
     assert len(mask_high_vol) == len(mask_market_close)
     assert len(mask_high_vol) == len(mask_limit_reach)
-
+    
     print("{:5d}, {:.2f}% of the whole data is cut off because of high volatility.".format(
             sum(mask_high_vol), sum(mask_high_vol) * 1.0 / len(mask_high_vol)
     ))
@@ -406,29 +394,104 @@ def test_transforms():
     # daily data pre-processing is done.
     # 到这里位置每天数据处理完毕，可把多日同一合约的处理后数据连起来，然后进行下方的before、after操作，
     # 即可得到clean_index
+
+    # valid_data.to_hdf('{symbol:s}_{trade_date:8d}.hd5'.format(symbol=symbol,
+    #                                                           trade_date=trade_date),
+    #                   key='valid_data')
+    # valid_data.to_msgpack('tmp.msgpk')
     
-    dirty_before = dirty_index.rolling(window=FORWARD_PREDICT_LEN + 1).apply(np.any).shift(-FORWARD_PREDICT_LEN)
-    dirty_after = dirty_index.rolling(window=BACKWARD_LEN).apply(np.any)
-    dirty_before = dirty_before.fillna(1.0).astype(bool)
-    dirty_after = dirty_after.fillna(1.0).astype(bool)
-    dirty_index = pd.DataFrame(data={'original': dirty_index,
-                                     'before'  : dirty_before,
-                                     'after'   : dirty_after}).any(axis=1)
+    return valid_data
     
-    print("{:5d}, {:.2f}% data points are cut-off in total".format(
+    
+def process_range_symbol_data(symbol_prefix, start_date, end_date,
+                              days_to_list=30, front_months=None,
+                              backward_len=224, forward_predict_len=60):
+    """
+    
+    Parameters
+    ----------
+    symbol_prefix : str
+        'rb'
+    start_date : int
+        20180104
+    end_date : int
+        20180104
+    backward_len : int
+    forward_predict_len : int
+
+    Returns
+    -------
+    pd.DataFrame
+
+    """
+    # Configs
+    from jaqs.data.continue_contract import get_map
+    from example.eventdriven.config_path import DATA_CONFIG_PATH, TRADE_CONFIG_PATH
+    data_config = jutil.read_json(DATA_CONFIG_PATH)
+    # trade_config = jutil.read_json(TRADE_CONFIG_PATH)
+
+    # DataService
+    ds = RemoteDataService()
+    ds.init_from_config(data_config)
+
+    # Get (trade_date -> front month contract) map
+    if front_months is None:
+        front_months = ['01', '05', '10']
+    df_map = get_map(ds, symbol_prefix,
+                     start_date=start_date, end_date=end_date,
+                     days_to_delist=days_to_list,
+                     front_months=front_months)
+    df_map = df_map.set_index('trade_date')
+
+    # Get daily pre-processed data and dirty_index
+    valid_data_list = []
+    count = 0
+    for trade_date, row in df_map.iterrows():
+        count += 1
+        symbol = row['symbol']
+        
+        print("=> Processing {:10s} on {:8d}".format(symbol, trade_date))
+        valid_data = process_daily_symbol_data(symbol=symbol, trade_date=trade_date)
+        print(valid_data.shape)
+        print("=> Processed  {:10s} on {:8d}".format(symbol, trade_date))
+        
+        valid_data_list.append(valid_data)
+
+    valid_data = pd.concat(valid_data_list, axis=0)
+    valid_data.index = np.arange(valid_data.shape[0])
+
+    dirty_index = valid_data['dirty_index']
+    print("Before roll: {:5d}, {:.2f}% data points are cut-off in total".format(
             sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
     ))
+    dirty_before = dirty_index.rolling(window=forward_predict_len + 1).apply(np.any).shift(-forward_predict_len)
+    dirty_after = dirty_index.rolling(window=backward_len).apply(np.any)
+    dirty_before = dirty_before.fillna(1.0).astype(bool)
+    dirty_after = dirty_after.fillna(1.0).astype(bool)
+    dirty_index_new = pd.DataFrame(data={'original': dirty_index,
+                                         'before'  : dirty_before,
+                                         'after'   : dirty_after}).any(axis=1)
+    
+    print(" After roll: {:5d}, {:.2f}% data points are cut-off in total".format(
+            sum(dirty_index_new), sum(dirty_index_new) * 1.0 / len(dirty_index_new)
+    ))
+    print("Result data shape: {}, n_trade_days: {:d}".format(valid_data.shape, count))
 
-    assert valid_data.shape[0] == dirty_index.shape[0]
-    valid_data.loc[:, 'dirty_index'] = dirty_index
-    valid_data.to_hdf('{symbol:s}_{trade_date:8d}.hd5'.format(symbol=symbol,
-                                                              trade_date=trade_date),
+    assert valid_data.shape[0] == dirty_index_new.shape[0]
+    valid_data.loc[:, 'dirty_index'] = dirty_index_new
+    
+    # Dump to local file
+    valid_data.to_hdf('{symbol_prefix:s}_{start_date:8d}_{end_date:8d}.hd5'.format(symbol_prefix=symbol_prefix,
+                                                                                   start_date=start_date,
+                                                                                   end_date=end_date),
                       key='valid_data')
-    # valid_data.to_msgpack('tmp.msgpk')
-    print("")
-    # clean_data = valid_data.drop(index=dirty_index.index[dirty_index.values])
+    
+    # Get clean_data
+    # clean_data = valid_data.drop(index=dirty_index_new.index[dirty_index_new.values])
     # print(clean_data.shape)
     # print(res.columns)
+    
+    return valid_data
 
 
 if __name__ == "__main__":
@@ -438,7 +501,11 @@ if __name__ == "__main__":
     n_loops = 1
     for _ in range(n_loops):
         # test_advanced_preprocess()
-        test_transforms()
+        # test_transforms()
+        # process_daily_symbol_data('rb1701.SHF', 20161012)
+        res = process_range_symbol_data('rb', 20160824, 20160831,
+                                        days_to_list=30, front_months=['01', '05', '10'],
+                                        backward_len=224, forward_predict_len=60)
     
     t = (time.time() - t1) / n_loops
     print("{:5d} loops in total. Time per loop: {: 4.3f} sec. ".format(n_loops, t))
