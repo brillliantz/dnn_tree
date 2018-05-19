@@ -174,11 +174,12 @@ class PreActBasicBlock(_BaseBlock):
         self.stride = stride
     
     def forward(self, x):
-        out = self.bn1(x)
+        out = x
+        # out = self.bn1(x)
         out = self.relu(out)
         out = self.conv1(out)
 
-        out = self.bn2(out)
+        # out = self.bn2(out)
         out = self.relu(out)
         out = self.conv2(out)
         
@@ -359,7 +360,9 @@ class ResNet(nn.Module):
             self.bn0 = BatchNormXd(num_planes[0])
             self.relu0 = nn.ReLU(inplace=True)  # size/2
             
-            self.top_layer = nn.Sequential(self.conv0, self.bn0, self.relu0)
+            self.top_layer = nn.Sequential(self.conv0,
+                                           #self.bn0,
+                                           self.relu0)
         else:
             raise NotImplementedError("mode = {:s}".format(mode))
 
