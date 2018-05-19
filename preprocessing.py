@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 
 JAQS_DIR = r'G:\Working\Junzhi\OpenSource\JAQS'
+JAQS_DIR_LINUX = '/home/liubn/research/jaqs'
 sys.path.append(JAQS_DIR)
+sys.path.append(JAQS_DIR_LINUX)
 
 import jaqs.util as jutil
 from jaqs.data import RemoteDataService
