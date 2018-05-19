@@ -141,6 +141,7 @@ class FutureTickDatasetNew(Dataset):
     def __init__(self, data_paths, key='valid_data',
                  backward_window=240, forward_window=60,
                  train_mode=True, train_ratio=0.7,
+                 cut_len=0,
                  ):
         if not isinstance(data_paths, list):
             data_paths = [data_paths]
@@ -149,6 +150,7 @@ class FutureTickDatasetNew(Dataset):
         self.backward_window = backward_window
         self.train_mode = train_mode
         self.train_ratio = train_ratio
+        self.cut_len = cut_len
         
         self._df_raw = None
         self.df = None
@@ -159,6 +161,7 @@ class FutureTickDatasetNew(Dataset):
         self.y = None
         
         self._df_raw = self._load_data(data_paths, key)
+        self._cut()
         self._split_train_test()
         self._preprocess()
         self._validate()
@@ -169,8 +172,18 @@ class FutureTickDatasetNew(Dataset):
             df = pd.read_hdf(p, key)
             dfs.append(df)
         df = pd.concat(dfs, axis=0)
+        df.index = np.arange(df.shape[0])
         return df
+
+    def _cut(self):
+        if not self.cut_len:
+            return
     
+        if isinstance(self.cut_len, int):
+            self._df_raw = self._df_raw.iloc[: self.cut_len]
+        elif isinstance(self.cut_len, float):
+            self._df_raw = self._df_raw.iloc[: int(len(self._df_raw) * self.cut_len)]
+            
     def _split_train_test(self):
         n = len(self._df_raw)
         train_len = int(n * self.train_ratio)
@@ -229,7 +242,7 @@ class FutureTickDatasetNew(Dataset):
         
     def _validate(self):
         assert self.df.shape[0] == self._df_raw.shape[0]
-        for df in [self._df_raw, self.df]:
+        for i, df in enumerate([self._df_raw, self.df]):
             clean_data = df.loc[self.index]
             nan_count = clean_data.isnull().sum().sum()
             assert nan_count == 0
@@ -247,7 +260,7 @@ class FutureTickDatasetNew(Dataset):
         print("\n" + "=> Mean of abs(y): {:4.4f}".format(mean))
         
     def __len__(self):
-        return len(self.index) - self.backward_window
+        return len(self.index)# - self.backward_window
     
     def __getitem__(self, idx):
         start = self.index[idx]
