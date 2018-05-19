@@ -404,8 +404,7 @@ def process_daily_symbol_data(symbol, trade_date):
     
     
 def process_range_symbol_data(symbol_prefix, start_date, end_date,
-                              days_to_list=30, front_months=None,
-                              backward_len=224, forward_predict_len=60):
+                              days_to_list=30, front_months=None, ):
     """
     
     Parameters
@@ -445,9 +444,7 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
 
     # Get daily pre-processed data and dirty_index
     valid_data_list = []
-    count = 0
     for trade_date, row in df_map.iterrows():
-        count += 1
         symbol = row['symbol']
         
         print("=> Processing {:10s} on {:8d}".format(symbol, trade_date))
@@ -460,26 +457,6 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
     valid_data = pd.concat(valid_data_list, axis=0)
     valid_data.index = np.arange(valid_data.shape[0])
 
-    dirty_index = valid_data['dirty_index']
-    print("Before roll: {:5d}, {:.2f}% data points are cut-off in total".format(
-            sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
-    ))
-    dirty_before = dirty_index.rolling(window=forward_predict_len + 1).apply(np.any).shift(-forward_predict_len)
-    dirty_after = dirty_index.rolling(window=backward_len).apply(np.any)
-    dirty_before = dirty_before.fillna(1.0).astype(bool)
-    dirty_after = dirty_after.fillna(1.0).astype(bool)
-    dirty_index_new = pd.DataFrame(data={'original': dirty_index,
-                                         'before'  : dirty_before,
-                                         'after'   : dirty_after}).any(axis=1)
-    
-    print(" After roll: {:5d}, {:.2f}% data points are cut-off in total".format(
-            sum(dirty_index_new), sum(dirty_index_new) * 1.0 / len(dirty_index_new)
-    ))
-    print("Result data shape: {}, n_trade_days: {:d}".format(valid_data.shape, count))
-
-    assert valid_data.shape[0] == dirty_index_new.shape[0]
-    valid_data.loc[:, 'dirty_index'] = dirty_index_new
-    
     # Dump to local file
     valid_data.to_hdf('{symbol_prefix:s}_{start_date:8d}_{end_date:8d}.hd5'.format(symbol_prefix=symbol_prefix,
                                                                                    start_date=start_date,
@@ -494,6 +471,42 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
     return valid_data
 
 
+def roll_dirty_index(valid_data, backward_len=224, forward_predict_len=60):
+    
+    if backward_len and forward_predict_len:
+        dirty_index = valid_data['dirty_index']
+        print("Before roll: {:5d}, {:.2f}% data points are cut-off in total".format(
+                sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
+        ))
+        dirty_before = dirty_index.rolling(window=forward_predict_len + 1).apply(np.any).shift(-forward_predict_len)
+        dirty_after = dirty_index.rolling(window=backward_len).apply(np.any)
+        dirty_before = dirty_before.fillna(1.0).astype(bool)
+        dirty_after = dirty_after.fillna(1.0).astype(bool)
+        dirty_index_new = pd.DataFrame(data={'original': dirty_index,
+                                             'before'  : dirty_before,
+                                             'after'   : dirty_after}).any(axis=1)
+        
+        print(" After roll: {:5d}, {:.2f}% data points are cut-off in total".format(
+                sum(dirty_index_new), sum(dirty_index_new) * 1.0 / len(dirty_index_new)
+        ))
+        print("Result data shape: {}, n_trade_days: {:d}".format(valid_data.shape,
+                                                                 len(np.unique(valid_data['date']))))
+        
+        assert valid_data.shape[0] == dirty_index_new.shape[0]
+        valid_data.loc[:, 'dirty_index'] = dirty_index_new
+        
+        return valid_data
+
+
+def test_range_pre_process_and_roll():
+    res = process_range_symbol_data('rb', 20160824, 20160831,
+                                    days_to_list=30, front_months=['01', '05', '10'],
+                                    )
+    res = roll_dirty_index(res,
+                           backward_len=224, forward_predict_len=60)
+    print("done")
+
+
 if __name__ == "__main__":
     import time
     t1 = time.time()
@@ -503,9 +516,7 @@ if __name__ == "__main__":
         # test_advanced_preprocess()
         # test_transforms()
         # process_daily_symbol_data('rb1701.SHF', 20161012)
-        res = process_range_symbol_data('rb', 20160824, 20160831,
-                                        days_to_list=30, front_months=['01', '05', '10'],
-                                        backward_len=224, forward_predict_len=60)
+        test_range_pre_process_and_roll()
     
     t = (time.time() - t1) / n_loops
     print("{:5d} loops in total. Time per loop: {: 4.3f} sec. ".format(n_loops, t))
