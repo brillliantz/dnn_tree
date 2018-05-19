@@ -26,6 +26,7 @@ DATA_ROOT = r'G:\Study\Finance.Economics\quantitative finance\Data\Undergraduate
 TRADING_SESSIONS = [(90000, 113000),
                     (133000, 150000),
                     (210000, 230000)]
+MARKET_CLOSE = [150000, 230000]
 
 
 ######################################################
@@ -141,6 +142,30 @@ class RemoteDataService2(RemoteDataService):
 
 ######################################################
 # Advanced pre-process to clean data (for statistical learning)
+'''
+对数据集index为[0, 1, 2, ..., n].
+
+若idx=k处数据不可用，则
+  计算forward return需要用后面forward_len长度的数据：[k-forward_len, k]总长(forward_len + 1)的数据点都不可用
+  学习时用到前面总长backward_len的数据，则[k, k+backward_len-1]的数据点都不可用
+
+15:00和21:00的两个session由于有开盘竞价，所以不可连一起；
+23:00和09:00的两个session由于夜里发生很多事件，所以不可连一起；
+因此09:00-15:00, 21:00-23:00是两个“连续session”，分别处理。
+每一段的idx=-1和idx=n+1两个点可以认为是不可用，
+因而开头[0, backward-2]不可用，结尾[n+1-forward_len, n]不可用。
+
+理想处理方法:
+1. 把两个“连续session”之间增加一个dummy data point，并标记为不可用，
+2. 将所有不可用点的前后也mask上
+3. 循环的时候只循环可用index
+
+改进处理方法 - 把第一步改为：
+1. 直接把收盘的那个data point标记为不可用。（因为接近收盘都平仓了，不需要继续预测）
+
+
+'''
+
 
 def is_valid_trading_hour(time_):
     """
@@ -155,6 +180,7 @@ def is_valid_trading_hour(time_):
     bool
 
     """
+    global TRADING_SESSIONS
     flag = False
     for start, end in TRADING_SESSIONS:
         flag = flag or (start <= time_ <= end)
@@ -272,8 +298,31 @@ def get_mask_limit_reach(df, before=0, after=0):
     if after:
         res = res.rolling(window=after + 1).apply(np.any)
     
-    res = res.fillna(1.0)
-    res = res.astype(bool)
+    # res = res.fillna(1.0)
+    # res = res.astype(bool)
+    return res
+
+
+def get_mask_market_close(df):
+    """
+    df must be market data of a SINGLE natural/trade date.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+
+    Returns
+    -------
+
+    """
+    global MARKET_CLOSE
+    
+    res = pd.Series(index=df.index, data=False)
+    for close_time in MARKET_CLOSE:
+        mask = (df['time'] // 1000) <= close_time
+        last_idx = mask.index[mask.values][-1]
+        res.loc[last_idx] = True
+        
     return res
 
 
@@ -283,11 +332,11 @@ def get_mask_limit_reach(df, before=0, after=0):
 def test_elementary_preprocess():
     from jaqs.data.basic import Quote
     
-    df = read_daily_csv('rb1610.SHF', 20160912, data_root=DATA_ROOT)
+    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
     res = pre_process_df(df, KNOWN_COLS)
     
     ds = RemoteDataService2()
-    res, _ = ds.tick('rb1610.SHF', 20160912)
+    res, _ = ds.tick('rb1701.SHF', 20161012)
 
     l = Quote.create_from_df(res)
     print(len(l))
@@ -296,7 +345,7 @@ def test_elementary_preprocess():
 
 
 def test_advanced_preprocess():
-    df = read_daily_csv('rb1610.SHF', 20160912, data_root=DATA_ROOT)
+    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
     res = pre_process_df(df, KNOWN_COLS)
     print(res.shape)
     # print(res.columns)
@@ -307,13 +356,13 @@ def test_advanced_preprocess():
 
 
 def test_transforms():
-    df = read_daily_csv('rb1610.SHF', 20160912, data_root=DATA_ROOT)
-    res = pre_process_df(df, KNOWN_COLS)
-    print(res.shape)
+    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
+    market_data = pre_process_df(df, KNOWN_COLS)
+    print(market_data.shape)
     # print(res.columns)
     
-    res = pre_process_df2(res)
-    print(res.shape)
+    valid_data = pre_process_df2(market_data)
+    print(valid_data.shape)
     # print(res.columns)
     
     '''
@@ -323,25 +372,58 @@ def test_transforms():
         3. use BACKWARD_LEN data as input to model per data point
     '''
     BACKWARD_LEN = 250  # in length
-    FORWARD_PREDICT_SEC = 60  # in seconds
+    FORWARD_PREDICT_LEN = 60  # in seconds
     TICKS_PER_SECOND = 2
     
     HIGH_VOL_SECONDS = 60
-    mask_high_vol = get_mask_high_vol(res, high_vol_sec=HIGH_VOL_SECONDS)
-    mask_limit_reach = get_mask_limit_reach(res,
-                                            before=TICKS_PER_SECOND * FORWARD_PREDICT_SEC,
-                                            after=BACKWARD_LEN)
+    mask_high_vol = get_mask_high_vol(valid_data, high_vol_sec=HIGH_VOL_SECONDS)
+    mask_limit_reach = get_mask_limit_reach(valid_data,
+                                            before=0,
+                                            after=0)
+                                            # before=TICKS_PER_SECOND * FORWARD_PREDICT_SEC,
+                                            # after=BACKWARD_LEN)
+    mask_market_close = get_mask_market_close(valid_data)
 
-    print("{:.2f}% of the whole data is cut off because of high volatility.".format(
-            sum(mask_high_vol) * 1.0 / len(mask_high_vol)
-    ))
-    print("{:.2f}% of the whole data is cut off because of limit reach.".format(
-            sum(mask_limit_reach) * 1.0 / len(mask_limit_reach)
-    ))
-    mask_all = np.logical_and(mask_high_vol, mask_limit_reach)
+    assert len(mask_high_vol) == len(mask_market_close)
+    assert len(mask_high_vol) == len(mask_limit_reach)
 
-    res = res.drop(index=mask_all.index[mask_all.values])
-    print(res.shape)
+    print("{:5d}, {:.2f}% of the whole data is cut off because of high volatility.".format(
+            sum(mask_high_vol), sum(mask_high_vol) * 1.0 / len(mask_high_vol)
+    ))
+    print("{:5d}, {:.2f}% of the whole data is cut off because of limit reach.".format(
+            sum(mask_limit_reach), sum(mask_limit_reach) * 1.0 / len(mask_limit_reach)
+    ))
+    print("{:5d} data points marked as market_close.".format(
+            sum(mask_market_close)
+    ))
+    
+    dirty_index = pd.DataFrame(data={'high_vol'    : mask_high_vol,
+                                     'limit_reach' : mask_limit_reach,
+                                     'market_close': mask_market_close}).any(axis=1)
+    valid_data.loc[:, 'dirty_index'] = dirty_index
+    # daily data pre-processing is done.
+    # 到这里位置每天数据处理完毕，可把多日同一合约的处理后数据连起来，然后进行下方的before、after操作，
+    # 即可得到clean_index
+    
+    dirty_before = dirty_index.rolling(window=BACKWARD_LEN + 1).apply(np.any).shift(-BACKWARD_LEN)
+    dirty_after = dirty_index.rolling(window=FORWARD_PREDICT_LEN).apply(np.any)
+    dirty_before = dirty_before.fillna(1.0).astype(bool)
+    dirty_after = dirty_after.fillna(1.0).astype(bool)
+    dirty_index = pd.DataFrame(data={'original': dirty_index,
+                                     'before'  : dirty_before,
+                                     'after'   : dirty_after}).any(axis=1)
+    
+    print("{:5d}, {:.2f}% data points are cut-off in total".format(
+            sum(dirty_index), sum(dirty_index) * 1.0 / len(dirty_index)
+    ))
+
+    assert valid_data.shape[0] == dirty_index.shape[0]
+    valid_data.loc[:, 'dirty_index'] = dirty_index
+    valid_data.to_hdf('tmp.hd5', key='valid_data')
+    valid_data.to_msgpack('tmp.msgpk')
+    print("")
+    # clean_data = valid_data.drop(index=dirty_index.index[dirty_index.values])
+    # print(clean_data.shape)
     # print(res.columns)
 
 
@@ -349,7 +431,7 @@ if __name__ == "__main__":
     import time
     t1 = time.time()
     
-    n_loops = 6
+    n_loops = 1
     for _ in range(n_loops):
         # test_advanced_preprocess()
         test_transforms()
