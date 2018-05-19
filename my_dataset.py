@@ -183,7 +183,7 @@ class FutureTickDatasetNew(Dataset):
             self._df_raw = self._df_raw.iloc[: self.cut_len]
         elif isinstance(self.cut_len, float):
             self._df_raw = self._df_raw.iloc[: int(len(self._df_raw) * self.cut_len)]
-            
+        
     def _split_train_test(self):
         n = len(self._df_raw)
         train_len = int(n * self.train_ratio)
@@ -195,7 +195,9 @@ class FutureTickDatasetNew(Dataset):
         
     def _preprocess(self):
         # Roll dirty index to get complete dirty_index
-        self._df_raw.loc[:, 'dirty_index'].iloc[: self.backward_window] = True
+        self._df_raw.loc[: self._df_raw.index[self.backward_window+1], 'dirty_index'] = True
+        self._df_raw.loc[self._df_raw.index[-self.backward_window-1]: , 'dirty_index'] = True
+        # self._df_raw.loc[self._df_raw.index[-1], 'dirty_index'] = True
         self._df_raw.loc[:, 'dirty_index'] = \
             preprocessing.roll_dirty_index(self._df_raw['dirty_index'],
                                            backward_len=0,
@@ -267,7 +269,7 @@ class FutureTickDatasetNew(Dataset):
         start = self.index[idx]
         end = start + self.backward_window
         sample_x = self.x[:, start: end]
-        sample_y = self.y[:, end]
+        sample_y = self.y[:, end-1]
         
         return sample_x, sample_y
 
