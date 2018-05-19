@@ -4,8 +4,30 @@ import numpy as np
 import torch
 from fileio import create_dir
 
+import torch.nn as nn
+import torch.functional as F
+from torch.nn.modules.loss import _Loss, _assert_no_grad
+
 __all__ = ['calc_rsq', 'calc_accu', 'calc_topk_accu',
            'argmax', 'time_it', 'create_dir']
+
+
+def invest_loss(yhat, y):
+    # return torch.neg(torch.mean(y * yhat, dim=0))
+    
+    # thresh = F.threshold(torch.abs(yhat), 0.5, 0, False) - 0.5
+    unit_profit = torch.sign(yhat) * y
+    
+    return torch.neg(torch.mean(unit_profit, dim=0))
+
+
+class InvestLoss(_Loss):
+    def __init__(self, size_average=True, reduce=True):
+        super(InvestLoss, self).__init__(size_average, reduce)
+    
+    def forward(self, input_, target):
+        _assert_no_grad(target)
+        return invest_loss(input_, target)
 
 
 def calc_rsq(y, yhat):
