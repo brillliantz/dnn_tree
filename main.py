@@ -22,7 +22,7 @@ model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-SAVE_MODEL_FP = 'saved_torch_models/resnet_preact2/model.pytorch'
+SAVE_MODEL_FP = 'saved_torch_models/resnet_preact_new_data/model.pytorch'
 best_score = 0
 
 
@@ -84,6 +84,7 @@ def model_predict(test_loader, model, out_numpy=False):
 
     with torch.no_grad():
         for features, labels in test_loader:
+        # for features, labels in tqdm(test_loader):
             features, labels = features.to(args.device), labels.to(args.device)
             
             outputs = model(features)
@@ -191,16 +192,26 @@ def main():
 
     # Load dataset & dataloader
     # DEBUG
-    args.batch_size = 128
-    args.print_freq = 500
-    print("=> use batch_size {:d}".format(args.batch_size))
-    from my_dataset import get_future_loader
-    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
+    args.batch_size = 32
+    args.print_freq = 10
+    print("=> start to load data. Using batch_size {:d}".format(args.batch_size))
+    # from my_dataset import get_future_loader
+    # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
+    from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
+    ds = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
+                              'valid_data', backward_window=224, forward_window=60,
+                              train_mode=True, train_ratio=0.7)
+    train_loader = get_future_loader_from_dataset(ds, batch_size=16)
+    ds_val = FutureTickDatasetNew('Data/future_new/' + 'rb_20160801_20160831.hd5',
+                                  'valid_data', backward_window=224, forward_window=60,
+                                  train_mode=False, train_ratio=0.7)
+    val_loader = get_future_loader_from_dataset(ds_val, batch_size=16)
     # from my_dataset import get_cifar_10
     # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     # from my_dataset import get_future_bar_classification_data
     # train_loader, val_loader = get_future_bar_classification_data(batch_size=args.batch_size, cut_len=0)
     # train_loader, val_loader = load_imagenet(args.data, args.batch_size, args.workers)
+    print("=> Data loading finish")
 
     # args.run_mode = 'evaluate'
     if args.run_mode == 'predict':

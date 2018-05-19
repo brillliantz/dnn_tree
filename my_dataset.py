@@ -239,9 +239,12 @@ class FutureTickDatasetNew(Dataset):
     def show_statistics(self):
         df = self.df.loc[self.index]
         print("\n" + "="*5 + "Dataset statistics: ")
-        print(df.describe())
-        print("\n" + "="*5 + "Median of abs(y): ")
-        print(np.median(np.abs(df['y']), axis=0))
+        # print(df.describe())
+        
+        abs_y = np.abs(df['y'])
+        mean, median = np.median(abs_y, axis=0), np.mean(abs_y, axis=0)
+        print("\n" + "=> Median of abs(y): {:2.4f}".format(median))
+        print("\n" + "=> Mean of abs(y): {:4.4f}".format(mean))
         
     def __len__(self):
         return len(self.index) - self.backward_window
@@ -333,15 +336,14 @@ def get_future_loader(batch_size, cut_len, lite_version=True):
 
 
 def get_future_loader_from_dataset(dataset, batch_size):
-    print("Train dataset len: {:d}\n"
-          "Test dataset len: {:d}".format(len(dataset), len(dataset)))
-    
-    # dataset.show_statistics()
+    print("=> dataset len: {:d}\n".format(len(dataset), len(dataset)))
     
     ds_len = len(dataset)
     itr_per_epoch = ds_len // batch_size
     print("Iterations needed per epoch: {:d}".format(itr_per_epoch))
     
+    dataset.show_statistics()
+
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,)
     
     return loader

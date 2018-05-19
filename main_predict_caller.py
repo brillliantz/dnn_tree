@@ -14,7 +14,8 @@ def test():
     
     batch_size = 16
     # train_loader, val_loader = get_future_loader(batch_size=batch_size, cut_len=40000, lite_version=True)
-    ds = FutureTickDatasetNew('rb1701.SHF_20160801.hd5', 'valid_data', backward_window=224, forward_window=60)
+    ds = FutureTickDatasetNew('rb1701.SHF_20160801.hd5', 'valid_data', backward_window=224, forward_window=60,
+                              train_mode=True, train_ratio=0.7)
     val_loader = get_future_loader_from_dataset(ds, batch_size=16)
     
     SAVE_MODEL_FP = 'saved_torch_models/resnet_preact2/model.pytorch'
