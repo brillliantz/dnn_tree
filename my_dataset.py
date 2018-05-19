@@ -191,6 +191,7 @@ class FutureTickDatasetNew(Dataset):
             self._df_raw = self._df_raw[: train_len]
         else:
             self._df_raw = self._df_raw[train_len:]
+            self._df_raw.index = np.arange(self._df_raw.shape[0])
         
     def _preprocess(self):
         # Roll dirty index to get complete dirty_index
@@ -264,8 +265,9 @@ class FutureTickDatasetNew(Dataset):
     
     def __getitem__(self, idx):
         start = self.index[idx]
-        sample_x = self.x[:, start: start + self.backward_window]
-        sample_y = self.y[:, self.backward_window]
+        end = start + self.backward_window
+        sample_x = self.x[:, start: end]
+        sample_y = self.y[:, end]
         
         return sample_x, sample_y
 
