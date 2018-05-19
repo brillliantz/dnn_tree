@@ -83,7 +83,7 @@ def model_predict(test_loader, model, out_numpy=False):
     model.eval()
 
     with torch.no_grad():
-        for features, labels in tqdm(test_loader):
+        for features, labels in test_loader:
             features, labels = features.to(args.device), labels.to(args.device)
             
             outputs = model(features)
@@ -154,8 +154,8 @@ def main():
     # define loss function (criterion) and optimizer
     # criterion = nn.CrossEntropyLoss()  # .cuda()
     # score_func = utils.calc_accu
-    # criterion = nn.modules.loss.L1Loss()
-    criterion = utils.InvestLoss()
+    criterion = nn.modules.loss.L1Loss()
+    # criterion = utils.InvestLoss()
     score_func = utils.calc_rsq
     
     criterion.to(args.device)
@@ -191,11 +191,11 @@ def main():
 
     # Load dataset & dataloader
     # DEBUG
-    args.batch_size = 16
-    args.print_freq = 10
+    args.batch_size = 128
+    args.print_freq = 500
     print("=> use batch_size {:d}".format(args.batch_size))
     from my_dataset import get_future_loader
-    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=12000, lite_version=True)
+    train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
     # from my_dataset import get_cifar_10
     # train_loader, val_loader = get_cifar_10(batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     # from my_dataset import get_future_bar_classification_data
@@ -230,10 +230,10 @@ def main():
         # evaluate on validation set
         score, loss = model_score(train_loader, model, score_func, criterion)
         print("=> Train_loss = {:+4.6f}".format(loss.item()))
-        # print("=> Train_score = {:+4.6f}".format(score.item()))
+        print("=> Train_score = {:+4.6f}".format(score.item()))
         score, loss = model_score(val_loader, model, score_func, criterion)
         print("=> Val_loss = {:+4.6f}".format(loss.item()))
-        # print("=> Val_score = {:+4.6f}".format(score.item()))
+        print("=> Val_score = {:+4.6f}".format(score.item()))
 
         # remember best prec@1 and save checkpoint
         is_best = score > best_score

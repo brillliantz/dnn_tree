@@ -2,7 +2,7 @@ import os
 # import torch
 
 
-gpu_no = 5
+gpu_no = 3
 os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_no)
 
 # use limited GPU resources
