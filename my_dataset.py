@@ -154,6 +154,8 @@ class FutureTickDatasetNew(Dataset):
         
         self._df_raw = None
         self.df = None
+        self.rmean = None
+        self.rstd = None
         
         self.index = None
         
@@ -164,7 +166,7 @@ class FutureTickDatasetNew(Dataset):
         self._cut()
         self._split_train_test()
         self._preprocess()
-        # self._validate()
+        self._validate()
     
     def _load_data(self, paths, key):
         dfs = []
@@ -233,7 +235,8 @@ class FutureTickDatasetNew(Dataset):
         
         # TODO: std
         roll = self.df.rolling(window=self.backward_window, axis=0)
-        std_eq_zero_mask = (roll.std() < 1e-8).any(axis=1)
+        rmean, rstd = roll.mean(), roll.std()
+        std_eq_zero_mask = (rstd < 1e-8).any(axis=1)
         std_eq_zero_mask = preprocessing.roll_dirty_index(std_eq_zero_mask,
                                                           backward_len=0,
                                                           forward_predict_len=self.forward_window + self.backward_window)
@@ -243,7 +246,9 @@ class FutureTickDatasetNew(Dataset):
         self.dirty_index = didx.copy()
         self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
         
-        self.df = (self.df - roll.mean()) / roll.std()
+        self.df = (self.df - rmean) / rstd
+        self.rmean = rmean
+        self.rstd = rstd
         # self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
 
         # way 2
