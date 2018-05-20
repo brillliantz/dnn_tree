@@ -212,8 +212,24 @@ class FutureTickDatasetNew(Dataset):
         if 'mid' not in XY_COLS:
             XY_COLS.append('mid')
         
+        def add_mul(xy):
+            xy.loc[:, 'bp_aq'] = xy['bidprice1'] * xy['askvolume1']
+            xy.loc[:, 'ap_bq'] = xy['askprice1'] * xy['bidvolume1']
+            return xy
+        def calc_book_imbalance(bidp, askp, bidq, askq):
+                return (bidq - askq) / (bidq + askq)
+        #self._df_raw = add_mul(self._df_raw)
+        #self._df_raw.loc[:, 'imba'] = calc_book_imbalance(self._df_raw['bidprice1'],
+        #                                                  self._df_raw['askprice1'],
+        #                                                  self._df_raw['bidvolume1'],
+        #                                                  self._df_raw['askvolume1'],
+        #                                                 )
         self._df_raw.loc[:, 'y'] = self._df_raw['mid'].pct_change(self.forward_window).shift(-self.forward_window)
-        self.df = self._df_raw.reindex(columns=XY_COLS)
+
+        #XY_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
+        #X_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
+
+        self.df = self._df_raw.reindex(columns=X_COLS)
         
         # TODO: std
         roll = self.df.rolling(window=self.backward_window, axis=0)
@@ -228,6 +244,7 @@ class FutureTickDatasetNew(Dataset):
         self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
         
         self.df = (self.df - roll.mean()) / roll.std()
+        self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
         
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
