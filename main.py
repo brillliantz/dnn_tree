@@ -23,7 +23,7 @@ model_names = sorted(name for name in models.__dict__
                      and callable(models.__dict__[name]))
 
 # SAVE_MODEL_FP = 'saved_torch_models/preact_old_index/model.pytorch'
-SAVE_MODEL_FP = 'saved_torch_models/tmp/model.pytorch'
+SAVE_MODEL_FP = 'saved_torch_models/pretrained_newnew_data/model.pytorch'
 best_score = 0
 
 
@@ -54,9 +54,10 @@ def create_arg_parser():
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 20)')
+    tmp = 'saved_torch_models/resnet_preact2/best_checkpoint.pytorch'
     parser.add_argument('--resume', type=str, metavar='PATH',
                         # default='',
-                        default=SAVE_MODEL_FP,
+                        default=tmp,
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--run_mode', type=str, metavar='MODE', default='',
                         help='[evaluate] or [predict]')
@@ -196,11 +197,11 @@ def main():
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
-    cut_len = 400000
+    cut_len = 0
     ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
                                'Data/future_new/' + 'rb_20160901_20160930.hd5',
                                'Data/future_new/' + 'rb_20161001_20161031.hd5',
-                               'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                               #'Data/future_new/' + 'rb_20161101_20161130.hd5',
                               ],
                               'valid_data', backward_window=224, forward_window=60,
                               train_mode=True, train_ratio=0.7,
@@ -209,7 +210,7 @@ def main():
     ds_val = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
                                    'Data/future_new/' + 'rb_20160901_20160930.hd5',
                                    'Data/future_new/' + 'rb_20161001_20161031.hd5',
-                                   'Data/future_new/' + 'rb_20161101_20161130.hd5',
+                                   #'Data/future_new/' + 'rb_20161101_20161130.hd5',
                                    ],
                                   'valid_data', backward_window=224, forward_window=60,
                                   train_mode=False, train_ratio=0.7,
@@ -421,7 +422,7 @@ def main_predict(loader, model_save_path):
     args = parser.parse_args()
     
     # choose computation device: CPU/GPU
-    print("=> visable GPU card: #{:d}".format(gpu_config_torch.gpu_no))
+    print("=> visable GPU card: #{:s}".format(','.join(gpu_config_torch.gpu_no)))
     try_use_gpu = True
     if try_use_gpu:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
