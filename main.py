@@ -22,7 +22,8 @@ model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-SAVE_MODEL_FP = 'saved_torch_models/resnet_preact_new_data/model.pytorch'
+# SAVE_MODEL_FP = 'saved_torch_models/preact_old_index/model.pytorch'
+SAVE_MODEL_FP = 'saved_torch_models/tmp/model.pytorch'
 best_score = 0
 
 
@@ -137,7 +138,8 @@ def main():
         model = resnet18_pre_act(dim=1,
                          pretrained=False,
                          in_planes=8,
-                         num_classes=1,)
+                         num_classes=1,
+                         tanh=False)
         # from model import Net
         # model = Net(64 * 56, 1, in_channels=8, dim=1)
         # from resnet import resnet18
@@ -189,12 +191,12 @@ def main():
     # Load dataset & dataloader
     # DEBUG
     args.batch_size = 128
-    args.print_freq = 200
+    args.print_freq = 500
     print("=> start to load data. Using batch_size {:d}".format(args.batch_size))
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=args.batch_size, cut_len=0, lite_version=False)
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
-    cut_len = 0
+    cut_len = 400000
     ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5',
                                'Data/future_new/' + 'rb_20160901_20160930.hd5',
                                'Data/future_new/' + 'rb_20161001_20161031.hd5',
