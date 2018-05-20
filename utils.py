@@ -21,7 +21,8 @@ def invest_loss(yhat, y):
     # return torch.neg(torch.mean(y * yhat, dim=0))
     
     # thresh = F.threshold(torch.abs(yhat), 0.5, 0, False) - 0.5
-    unit_profit = torch.sign(yhat) * y
+    # unit_profit = torch.sign(yhat) * y
+    unit_profit = yhat * y
     
     return torch.neg(torch.mean(unit_profit, dim=0))
 
