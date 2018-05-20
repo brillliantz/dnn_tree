@@ -86,6 +86,17 @@ def read_daily_csv(symbol, trade_date, data_root):
     return df
 
 
+def change_time(df):
+    df.loc[:, 'time'] = jutil.convert_datetime_to_int_time(df['datetime'])
+    df.loc[:, 'date'] = jutil.convert_datetime_to_int(df['datetime'])
+    # TODO: time after 20:00 will be next trade_date
+    df.loc[:, 'trade_date'] = df['date']
+    
+    df = df.drop('datetime', axis=1)
+    
+    return df
+
+
 def pre_process_df(df, col_names, symbol):
     """
     Remove unnecessary columns; add date, time, trade_date.
@@ -105,20 +116,12 @@ def pre_process_df(df, col_names, symbol):
     n_col = len(col_names)
     res = df.iloc[:, :n_col]
     res.columns = col_names
-    
     res = res.drop(['name', 'Unknown0'], axis=1)
-    
-    res.loc[:, 'datetime'] = pd.to_datetime(res['time'], format="%Y-%m-%d %H:%M:%S.%f")
-    
-    res.loc[:, 'time'] = jutil.convert_datetime_to_int_time(res['datetime'])
-    res.loc[:, 'date'] = jutil.convert_datetime_to_int(res['datetime'])
-    # TODO: time after 20:00 will be next trade_date
-    res.loc[:, 'trade_date'] = res['date']
-    
-    # res.loc[:, 'symbol'] = res['symbol'].str.lower()
+
     res.loc[:, 'symbol'] = symbol
-    
-    res = res.drop('datetime', axis=1)
+    res.loc[:, 'datetime'] = pd.to_datetime(res['time'], format="%Y-%m-%d %H:%M:%S.%f")
+
+    res = change_time(res)
     
     return res
 
@@ -443,7 +446,7 @@ def process_range_symbol_data(symbol_prefix, start_date, end_date,
 
     # Get (trade_date -> front month contract) map
     if front_months is None:
-        front_months = ['01', '05', '10']
+        front_months = ['01','05', '10']
     df_map = get_map(ds, symbol_prefix,
                      start_date=start_date, end_date=end_date,
                      days_to_delist=days_to_list,
@@ -499,21 +502,29 @@ def roll_dirty_index(dirty_index, backward_len=224, forward_predict_len=60):
 def test_range_pre_process_and_roll():
     symbol_prefix = 'rb'
     
-    months = [#(20161001, 20161031),
-              #(20161101, 20161130),
+    months = [#(20160801, 20160831),
+              (20160901, 20160930),
+              (20161001, 20161031),
+              (20161101, 20161130),
               (20170101, 20170131),
-              # (20170201, 20170228)
+              #(20170201, 20170228)
               ]
     for start_date, end_date in months:
         
         # Get pre-processed data (with dirty index) between [start_date, end_date]
         res = process_range_symbol_data(symbol_prefix, start_date, end_date,
-                                        days_to_list=30, front_months=['01', '05', '10'],
+                                        days_to_list=1,
+                                        front_months=['01',
+                                                      #'05', '10'
+                                                      ],
                                         )
 
         # Roll dirty index to get complete dirty_index
         # We do not do it here. Instead, we do it before training models.
         # res.loc[:, 'dirty_index'] = roll_dirty_index(res['dirty_index'], backward_len=224, forward_predict_len=60)
+        
+        # Check
+        print(np.unique(res['symbol']))
         
         # Dump to local file
         res.to_hdf('Data/future_new/'
