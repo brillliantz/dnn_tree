@@ -2,7 +2,10 @@ import os
 # import torch
 
 
-gpu_no = [3]
+gpu_no = [#2,
+          #3,
+          4,
+          ]
 gpu_no = [str(i) for i in gpu_no]
 os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(gpu_no)
 
