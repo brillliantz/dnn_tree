@@ -201,7 +201,7 @@ class FutureTickDatasetNew(Dataset):
         self._df_raw.loc[:, 'dirty_index'] = \
             preprocessing.roll_dirty_index(self._df_raw['dirty_index'],
                                            backward_len=0,
-                                           forward_predict_len=max(self.forward_window, self.backward_window))
+                                           forward_predict_len=self.forward_window + self.backward_window)
         # 要使用的自变量
         X_COLS = ['mid', 'last',
                   'bidprice1', 'askprice1',
@@ -236,7 +236,7 @@ class FutureTickDatasetNew(Dataset):
         std_eq_zero_mask = (roll.std() < 1e-8).any(axis=1)
         std_eq_zero_mask = preprocessing.roll_dirty_index(std_eq_zero_mask,
                                                           backward_len=0,
-                                                          forward_predict_len=max(self.forward_window, self.backward_window))
+                                                          forward_predict_len=self.forward_window + self.backward_window)
         didx = self._df_raw['dirty_index']
         didx = np.logical_or(std_eq_zero_mask, didx)
         self._df_raw.loc[:, 'dirty_index'] = didx
@@ -247,8 +247,8 @@ class FutureTickDatasetNew(Dataset):
         # self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
 
         # way 2
-        self.df = self.df.loc[self.index]
-        assert self.df.isnull().sum().sum() == 0
+        # self.df = self.df.loc[self.index]
+        # assert self.df.isnull().sum().sum() == 0
         
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
@@ -286,12 +286,12 @@ class FutureTickDatasetNew(Dataset):
         print("\n" + "=> Mean of abs(y): {:4.4f}".format(mean))
         
     def __len__(self):
-        #return len(self.index)
-        return len(self.df) - self.backward_window
+        return len(self.index)
+        # return len(self.df) - self.backward_window
     
     def __getitem__(self, idx):
-        # start = self.index[idx]
-        start = idx
+        start = self.index[idx]
+        # start = idx
         end = start + self.backward_window
         sample_x = self.x[:, start: end]
         sample_y = self.y[:, end-1]
