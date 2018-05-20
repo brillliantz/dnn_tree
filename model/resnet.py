@@ -330,7 +330,7 @@ class ResNet(nn.Module):
     
     """
 
-    def __init__(self, in_planes, num_classes, block_cls, num_blocks, dim):
+    def __init__(self, in_planes, num_classes, block_cls, num_blocks, dim, tanh=False):
         super(ResNet, self).__init__()
 
         self.in_planes = in_planes
@@ -378,6 +378,11 @@ class ResNet(nn.Module):
         self.avgpool = AvgPoolXd(7, stride=1, dim=dim)
         self.fc = nn.Linear(num_planes[3] * block_cls.expansion, num_classes)
 
+        if tanh:
+            self.th = nn.Tanh()
+        else:
+            self.th = lambda x: x
+
         self._init_weights()
         
     def _init_weights(self):
@@ -420,6 +425,8 @@ class ResNet(nn.Module):
         out = self.avgpool(out)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
+
+        out = self.th(out)
 
         return out
 
