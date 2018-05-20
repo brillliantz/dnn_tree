@@ -164,7 +164,7 @@ class FutureTickDatasetNew(Dataset):
         self._cut()
         self._split_train_test()
         self._preprocess()
-        self._validate()
+        # self._validate()
     
     def _load_data(self, paths, key):
         dfs = []
@@ -229,7 +229,7 @@ class FutureTickDatasetNew(Dataset):
         #XY_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
         #X_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
 
-        self.df = self._df_raw.reindex(columns=X_COLS)
+        self.df = self._df_raw.reindex(columns=XY_COLS)
         
         # TODO: std
         roll = self.df.rolling(window=self.backward_window, axis=0)
@@ -244,7 +244,11 @@ class FutureTickDatasetNew(Dataset):
         self.index = self.dirty_index.index.values[np.logical_not(self.dirty_index.values)]
         
         self.df = (self.df - roll.mean()) / roll.std()
-        self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
+        # self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
+
+        # way 2
+        self.df = self.df.loc[self.index]
+        assert self.df.isnull().sum().sum() == 0
         
         self.x = self.df[X_COLS].values
         self.y = self.df['y'].values.reshape([-1, 1])
@@ -256,6 +260,8 @@ class FutureTickDatasetNew(Dataset):
         # [time_window, n_feature] -> [n_feature, time_window]
         self.x = np.swapaxes(self.x, 0, 1)
         self.y = np.swapaxes(self.y, 0, 1)
+
+        # print(self.df.shape, self.x.shape, self.y.shape)
 
         # self.x = torch.Tensor(self.x)
         # self.y = torch.Tensor(self.y)
@@ -280,10 +286,12 @@ class FutureTickDatasetNew(Dataset):
         print("\n" + "=> Mean of abs(y): {:4.4f}".format(mean))
         
     def __len__(self):
-        return len(self.index)# - self.backward_window
+        #return len(self.index)
+        return len(self.df) - self.backward_window
     
     def __getitem__(self, idx):
-        start = self.index[idx]
+        # start = self.index[idx]
+        start = idx
         end = start + self.backward_window
         sample_x = self.x[:, start: end]
         sample_y = self.y[:, end-1]
