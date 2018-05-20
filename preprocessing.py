@@ -86,7 +86,7 @@ def read_daily_csv(symbol, trade_date, data_root):
     return df
 
 
-def pre_process_df(df, col_names):
+def pre_process_df(df, col_names, symbol):
     """
     Remove unnecessary columns; add date, time, trade_date.
     output is just like what we received from the real-time market data parser.
@@ -115,7 +115,9 @@ def pre_process_df(df, col_names):
     # TODO: time after 20:00 will be next trade_date
     res.loc[:, 'trade_date'] = res['date']
     
-    res.loc[:, 'symbol'] = res['symbol'].str.lower()
+    # res.loc[:, 'symbol'] = res['symbol'].str.lower()
+    res.loc[:, 'symbol'] = symbol
+    
     res = res.drop('datetime', axis=1)
     
     return res
@@ -137,7 +139,7 @@ class RemoteDataService2(RemoteDataService):
 
         """
         df = read_daily_csv(symbol, trade_date, data_root=DATA_ROOT)
-        res = pre_process_df(df, KNOWN_COLS)
+        res = pre_process_df(df, KNOWN_COLS, symbol=symbol)
         msg = '0,'
         
         return res, msg
@@ -337,8 +339,9 @@ def get_mask_market_close(df):
 def test_elementary_preprocess():
     from jaqs.data.basic import Quote
     
-    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
-    res = pre_process_df(df, KNOWN_COLS)
+    symbol = 'rb1701.SHF'
+    df = read_daily_csv(symbol, 20161012, data_root=DATA_ROOT)
+    res = pre_process_df(df, KNOWN_COLS, symbol=symbol)
     
     ds = RemoteDataService2()
     res, _ = ds.tick('rb1701.SHF', 20161012)
@@ -350,8 +353,9 @@ def test_elementary_preprocess():
 
 
 def test_advanced_preprocess():
-    df = read_daily_csv('rb1701.SHF', 20161012, data_root=DATA_ROOT)
-    res = pre_process_df(df, KNOWN_COLS)
+    symbol = 'rb1701.SHF'
+    df = read_daily_csv(symbol, 20161012, data_root=DATA_ROOT)
+    res = pre_process_df(df, KNOWN_COLS, symbol=symbol)
     print(res.shape)
     # print(res.columns)
     
@@ -364,7 +368,7 @@ def process_daily_symbol_data(symbol, trade_date):
     global DATA_ROOT, HIGH_VOL_SECONDS
     
     df = read_daily_csv(symbol, trade_date, data_root=DATA_ROOT)
-    market_data = pre_process_df(df, KNOWN_COLS)
+    market_data = pre_process_df(df, KNOWN_COLS, symbol=symbol)
     print(market_data.shape)
     # print(res.columns)
     
