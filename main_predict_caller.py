@@ -1,6 +1,7 @@
 # encoding: utf-8
 
 import utils
+import torch
 import torch.nn as nn
 import numpy as np
 
@@ -9,16 +10,22 @@ from main import main_predict
 
 
 def test():
-    from my_dataset import get_future_loader
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
     
     batch_size = 16
+    # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=batch_size, cut_len=40000, lite_version=True)
-    '''
-    '''
-    ds = FutureTickDatasetNew(['Data/future_new/' + 'rb_20160801_20160831.hd5'],
+    months = [(20160801, 20160831),
+              #(20160901, 20160930),
+              #(20161001, 20161031),
+              #(20161101, 20161130),
+              #(20170101, 20170131),
+              ]
+    folder = 'Data/future_new/'
+    hdf_paths = ["{}rb_{}_{}.hd5".format(folder, start, end) for start, end in months]
+    ds = FutureTickDatasetNew(hdf_paths,
                               'valid_data', backward_window=224, forward_window=60,
-                              train_mode=True, train_ratio=1.0, cut_len=10000)
+                              train_mode=True, train_ratio=1.0, cut_len=200000)
     val_loader = get_future_loader_from_dataset(ds, batch_size=batch_size)
     
     SAVE_MODEL_FP = 'saved_torch_models/r0.1_new/best_checkpoint.pytorch'
@@ -33,9 +40,12 @@ def test():
     yhat = yhat.cpu().numpy().squeeze()
     y = y.numpy().squeeze()
     assert len(yhat) == len(ds.index)
+    
+    add_time_index_and_save(y, yhat, ds)
 
-    df = ds._df_raw.reindex(#index=ds.index,
-            columns=['date', 'time', 'mid', 'y'])
+
+def add_time_index_and_save(y, yhat, ds):
+    df = ds._df_raw.reindex(columns=['date', 'time', 'mid', 'y'])
     y_idx = ds.index + ds.backward_window - 1
     df.loc[:, 'yhat'] = np.nan
     df.loc[:, 'y_train'] = np.nan
@@ -48,29 +58,35 @@ def test():
     roll = df['y'].rolling(ds.backward_window)
     df.loc[:, 'y_restore2'] = df['y_train'] * roll.std() + roll.mean()
     
-    import torch
     two = df[['y', 'yhat_restore']]
     two = two.loc[ds.index].dropna()
-    print("Nan: ", two.isnull().sum().sum())
+    print("Nan count: ", two.isnull().sum().sum())
     print(two.corr().iloc[0, 1])
     print(utils.calc_rsq(torch.Tensor(two['y'].values),
                          torch.Tensor(two['yhat_restore'].values)))
 
-    '''
+    df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat_restore']).to_hdf('yhat.hd5', key='yhat')
+
+
+def compare_with_old_res(yhat):
+    """
+    
+    Parameters
+    ----------
+    yhat : np.ndarray
+
+    Returns
+    -------
+
+    """
     compare_y_pred = np.load('y_pred_val_40k_r0.1.npy')
-    to_be_compare = yhat.cpu().numpy()
+    to_be_compare = yhat
     
     abs_diff = np.abs(to_be_compare - compare_y_pred)
     res = abs_diff.sum()
     print("Sum of abs. diff: {:.4e}. Mean diff {:.4e}".format(res, abs_diff.mean()))
     is_all_close = np.allclose(to_be_compare, compare_y_pred, atol=1e-5, rtol=1e-3)
     print("allclose: {}".format(is_all_close))
-    '''
-    pass
-    # import numpy as np
-    # print(yhat.shape)
-    # np.save('y_true_{:d}'.format(batch_size), y.numpy())
-    # np.save('y_pred_{:d}'.format(batch_size), yhat.numpy())
 
 
 def test_dataset():
