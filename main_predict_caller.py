@@ -16,9 +16,10 @@ def test():
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=batch_size, cut_len=40000, lite_version=True)
     month = [#(20160801, 20160831),
-              (20160901, 20160930),
+              #(20160901, 20160930),
               #(20161001, 20161031),
               #(20161101, 20161130),
+              (20161201, 20161231),
               #(20170101, 20170131),
               ]
     folder = 'Data/future_new/'
@@ -71,7 +72,7 @@ def add_time_index_and_save(y, yhat, ds):
           utils.calc_rsq(torch.Tensor(two['y'].values),
                          torch.Tensor(two['yhat_restore'].values)))
     
-    return df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat_restore'])
+    return df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat', 'yhat_restore'])
 
 
 def compare_with_old_res(yhat):
