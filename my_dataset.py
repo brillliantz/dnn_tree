@@ -226,12 +226,12 @@ class FutureTickDatasetNew(Dataset):
         #                                                  self._df_raw['bidvolume1'],
         #                                                  self._df_raw['askvolume1'],
         #                                                 )
-        self._df_raw.loc[:, 'y'] = self._df_raw['mid'].pct_change(self.forward_window).shift(-self.forward_window)
+        self._df_raw.loc[:, 'y'] = self._df_raw['mid'].diff(self.forward_window).shift(-self.forward_window)
 
         #XY_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
         #X_COLS.extend(['bp_aq', 'ap_bq', 'imba'])
 
-        self.df = self._df_raw.reindex(columns=XY_COLS)
+        self.df = self._df_raw.reindex(columns=X_COLS)
         
         # TODO: std
         roll = self.df.rolling(window=self.backward_window, axis=0)
@@ -249,7 +249,11 @@ class FutureTickDatasetNew(Dataset):
         self.df = (self.df - rmean) / rstd
         self.rmean = rmean
         self.rstd = rstd
-        # self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
+
+        # standardize y with old mean and std (no future looking bias)
+        self.df.loc[:, 'y'] = self._df_raw['y']  # do not standardize y column
+        roll_y = self.df['y'].shift(self.forward_window).rolling(self.backward_window)
+        self.df.loc[:, 'y'] = (self.df['y'] - roll_y.mean()) / roll_y.std()
 
         # way 2
         # self.df = self.df.loc[self.index]
@@ -283,6 +287,11 @@ class FutureTickDatasetNew(Dataset):
     def show_statistics(self):
         df = self.df.loc[self.index]
         print("\n" + "="*5 + "Dataset statistics: ")
+        print("start date: {:10d}, end date: {:10d}".format(self._df_raw['date'].iat[0],
+                                                            self._df_raw['date'].iat[-1],
+                                                           )
+                                                           )
+
         # print(df.describe())
         
         abs_y = np.abs(df['y'])
@@ -391,7 +400,7 @@ def get_future_loader_from_dataset(dataset, batch_size):
     
     dataset.show_statistics()
 
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,)
     
     return loader
 
