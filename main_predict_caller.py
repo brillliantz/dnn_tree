@@ -12,20 +12,24 @@ from main import main_predict
 def test():
     from my_dataset import FutureTickDatasetNew, get_future_loader_from_dataset
     
-    batch_size = 16
+    batch_size = 128
     # from my_dataset import get_future_loader
     # train_loader, val_loader = get_future_loader(batch_size=batch_size, cut_len=40000, lite_version=True)
-    months = [(20160801, 20160831),
-              #(20160901, 20160930),
+    month = [#(20160801, 20160831),
+              (20160901, 20160930),
               #(20161001, 20161031),
               #(20161101, 20161130),
               #(20170101, 20170131),
               ]
     folder = 'Data/future_new/'
-    hdf_paths = ["{}rb_{}_{}.hd5".format(folder, start, end) for start, end in months]
-    ds = FutureTickDatasetNew(hdf_paths,
+    start, end = month[0]
+    fn = "rb_{}_{}.hd5".format(start, end)
+    hdf_path = folder + fn
+
+    cut_len = 0
+    ds = FutureTickDatasetNew(hdf_path,
                               'valid_data', backward_window=224, forward_window=60,
-                              train_mode=True, train_ratio=1.0, cut_len=200000)
+                              train_mode=True, train_ratio=1.0, cut_len=cut_len)
     val_loader = get_future_loader_from_dataset(ds, batch_size=batch_size)
     
     SAVE_MODEL_FP = 'saved_torch_models/r0.1_new/best_checkpoint.pytorch'
@@ -38,10 +42,11 @@ def test():
     print("Val_score = {:+4.6f}".format(score.item()))
     
     yhat = yhat.cpu().numpy().squeeze()
-    y = y.numpy().squeeze()
+    y = y.cpu().numpy().squeeze()
     assert len(yhat) == len(ds.index)
     
-    add_time_index_and_save(y, yhat, ds)
+    to_save = add_time_index_and_save(y, yhat, ds)
+    to_save.to_hdf(fn + '_yhat.hd5', key='yhat')
 
 
 def add_time_index_and_save(y, yhat, ds):
@@ -61,11 +66,12 @@ def add_time_index_and_save(y, yhat, ds):
     two = df[['y', 'yhat_restore']]
     two = two.loc[ds.index].dropna()
     print("Nan count: ", two.isnull().sum().sum())
-    print(two.corr().iloc[0, 1])
-    print(utils.calc_rsq(torch.Tensor(two['y'].values),
+    print("Correlation: ", two.corr().iloc[0, 1])
+    print("rsq between y & yhat_restore: ",
+          utils.calc_rsq(torch.Tensor(two['y'].values),
                          torch.Tensor(two['yhat_restore'].values)))
-
-    df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat_restore']).to_hdf('yhat.hd5', key='yhat')
+    
+    return df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat_restore'])
 
 
 def compare_with_old_res(yhat):
