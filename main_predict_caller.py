@@ -18,8 +18,8 @@ def test():
     month = [#(20160801, 20160831),
               #(20160901, 20160930),
               #(20161001, 20161031),
-              #(20161101, 20161130),
-              (20161201, 20161231),
+              (20161101, 20161130),
+              #(20161201, 20161231),
               #(20170101, 20170131),
               ]
     folder = 'Data/future_new/'
@@ -47,22 +47,25 @@ def test():
     assert len(yhat) == len(ds.index)
     
     to_save = add_time_index_and_save(y, yhat, ds)
-    to_save.to_hdf(fn + '_yhat.hd5', key='yhat')
+    print(to_save.describe())
+    to_save.to_hdf('Data/r0.1_new_yhat/' + fn + '_yhat.hd5', key='yhat')
 
 
 def add_time_index_and_save(y, yhat, ds):
     df = ds._df_raw.reindex(columns=['date', 'time', 'mid', 'y'])
     y_idx = ds.index + ds.backward_window - 1
     df.loc[:, 'yhat'] = np.nan
-    df.loc[:, 'y_train'] = np.nan
+    df.loc[:, 'y_norm'] = np.nan
     df.loc[y_idx, 'yhat'] = yhat
-    df.loc[y_idx, 'y_train'] = y
+    df.loc[y_idx, 'y_norm'] = y
+
+    print(df.loc[y_idx, 'y'].describe())
 
     col = 'y'
-    df.loc[:, col+'_restore' ] = df['y_train'] * ds.rstd[col] + ds.rmean[col]
+    df.loc[:, col+'_restore' ] = df['y_norm'] * ds.rstd[col] + ds.rmean[col]
     df.loc[:, 'yhat'+'_restore' ] = df['yhat'] * ds.rstd[col] + ds.rmean[col]
     roll = df['y'].rolling(ds.backward_window)
-    df.loc[:, 'y_restore2'] = df['y_train'] * roll.std() + roll.mean()
+    df.loc[:, 'y_restore2'] = df['y_norm'] * roll.std() + roll.mean()
     
     two = df[['y', 'yhat_restore']]
     two = two.loc[ds.index].dropna()
@@ -72,7 +75,7 @@ def add_time_index_and_save(y, yhat, ds):
           utils.calc_rsq(torch.Tensor(two['y'].values),
                          torch.Tensor(two['yhat_restore'].values)))
     
-    return df.reindex(columns=['date', 'time', 'mid', 'y', 'yhat', 'yhat_restore'])
+    return df.reindex(columns=['date', 'time', 'mid', 'y', 'y_norm', 'yhat', 'yhat_restore'])
 
 
 def compare_with_old_res(yhat):
